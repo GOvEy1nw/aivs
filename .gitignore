@@ -83,8 +83,10 @@ python-bootstrap/
 git-bootstrap/
 backend/requirements-dist.txt
 
-# External WanGP source is configured via WANGP_ROOT; never add local checkouts or runtime data.
+# WanGP source snapshots are generated from C:\Wan2GP for packaging.
 Wan2GP/
+resources/Wan2GP/
+.aivs-runtime/
 
 .projectmem/
 

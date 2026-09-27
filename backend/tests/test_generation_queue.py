@@ -14,6 +14,7 @@ from handlers.generation_handler import GenerationHandler
 from handlers.generation_queue_handler import GenerationQueueHandler
 from services.generation_queue_store import GenerationQueueStore
 from state.generation_queue_types import GenerationQueueState
+from services.wangp_downloads import download_progress
 
 
 class _Executor:
@@ -85,6 +86,27 @@ def _submit(queue: GenerationQueueHandler, request_id: str) -> str:
     )["jobId"]
 
 
+def test_bound_generation_download_progress_reaches_queue_and_clears(tmp_path):
+    from state.app_state_types import AppState, StartupReady
+    from state.app_settings import AppSettings
+
+    queue = _queue(tmp_path)
+    handler = GenerationHandler(AppState(generation=None, startup=StartupReady(), app_settings=AppSettings()), RLock())
+    handler.set_generation_queue(queue)
+    job_id = _submit(queue, "download")
+    queue._claim_next()
+    transfer = download_progress({"filename": "model.safetensors", "completed": 50, "total": 100, "speed": 10})
+    with handler.bind_queue_job(job_id, queue):
+        handler.update_progress("downloading_model", 3, progress_unit="bytes", model_download=transfer)
+        response = handler.get_generation_progress()
+        assert response.modelDownload is not None
+        assert (response.modelDownload.current, response.modelDownload.total, response.modelDownload.speedBps) == (50, 100, 10)
+        assert queue.snapshot()["active"]["progress"]["modelDownload"]["filename"] == "model.safetensors"
+        handler.update_progress("loading_model", 10)
+        assert handler.get_generation_progress().modelDownload is None
+    queue.shutdown()
+
+
 def test_late_progress_from_finished_job_cannot_mutate_next_active_job(tmp_path):
     queue = _queue(tmp_path)
     try:
@@ -103,6 +125,39 @@ def test_late_progress_from_finished_job_cannot_mutate_next_active_job(tmp_path)
         assert queue.get_job(first_id).progress == {"phase": "first", "percent": 10, "updatedAt": queue.get_job(first_id).progress["updatedAt"]}
         assert queue.get_job(second_id).progress["phase"] == "second"
         assert queue.get_job(second_id).status == "running"
+    finally:
+        queue.shutdown()
+
+
+def test_active_job_keeps_its_latest_preview_across_non_preview_progress(tmp_path):
+    queue = _queue(tmp_path)
+    try:
+        first_id, second_id = _submit(queue, "one"), _submit(queue, "two")
+        queue._claim_next()
+        queue.update_progress(
+            first_id,
+            "preview",
+            10,
+            {"previewUrl": "http://preview.test/latest.png", "modelDownload": {"current": 5}},
+        )
+        queue.update_progress(first_id, "generating", 20, {"statusDetail": "Denoising", "currentStep": 2})
+
+        progress = queue.get_job(first_id).progress
+        assert progress["previewUrl"] == "http://preview.test/latest.png"
+        assert progress["statusDetail"] == "Denoising"
+        assert progress["currentStep"] == 2
+        assert "modelDownload" not in progress
+
+        queue.update_progress(first_id, "preview", 25, {"previewUrl": None})
+        assert queue.get_job(first_id).progress["previewUrl"] == "http://preview.test/latest.png"
+        queue.update_progress(first_id, "preview", 30, {"previewUrl": "http://preview.test/newest.png"})
+        queue.update_progress(first_id, "generating", 35, {})
+        assert queue.get_job(first_id).progress["previewUrl"] == "http://preview.test/newest.png"
+
+        queue._finish(first_id, result={"kind": "image.generate", "response": {"outputs": []}})
+        queue._claim_next()
+        queue.update_progress(second_id, "generating", 30, {})
+        assert "previewUrl" not in queue.get_job(second_id).progress
     finally:
         queue.shutdown()
 

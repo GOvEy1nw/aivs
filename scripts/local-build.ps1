@@ -117,6 +117,12 @@ if ($LASTEXITCODE -ne 0) {
 # ============================================================
 # Step 4: Create installer
 # ============================================================
+& "$ScriptDir\stage-wan2gp.ps1"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to stage WanGP source!" -ForegroundColor Red
+    exit 1
+}
+
 $pkgParams = @{}
 if ($Unpack)         { $pkgParams["Unpack"] = $true }
 if ($Publish -ne "") { $pkgParams["Publish"] = $Publish }

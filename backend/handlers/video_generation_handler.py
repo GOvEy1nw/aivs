@@ -18,7 +18,7 @@ from handlers.generation_handler import GenerationHandler
 from model_profiles import get_video_profile, is_combination_supported, resolve_resolution
 from model_profiles.profiles import AspectRatio, ModelProfile, ResolutionTier, StyleDefinition
 from services.media_crop import crop_image_media, crop_video_media
-from services.wangp_bridge import CUSTOM_FINETUNE_CHECKPOINT_KEY, WanGPBridge
+from services.wangp_bridge import WanGPBridge
 from services.reframe_wangp_mapping import ReframePadding, map_reframe_to_wangp
 from services.video_clip import extract_audio_clip, extract_video_clip, probe_video_metadata
 from server_utils.media_validation import (
@@ -559,7 +559,7 @@ class VideoGenerationHandler(StateHandlerBase):
 
             settings = self.state.app_settings.model_copy(deep=True)
             active_model_type = (
-                "aivs_minimax_h3_ref2va_hybrid_20b"
+                "minimax_h3_ref2va_pruned"
                 if is_h3 and h3_uses_ref2va
                 else profile.wangp_model_type
             )
@@ -568,9 +568,6 @@ class VideoGenerationHandler(StateHandlerBase):
             )
             default_settings = dict(resolved_profile_settings)
             default_settings.update(profile.wangp_default_settings)
-            custom_checkpoint = settings.custom_finetunes.get(profile.id)
-            if custom_checkpoint:
-                default_settings[CUSTOM_FINETUNE_CHECKPOINT_KEY] = custom_checkpoint
             default_steps = default_settings.get("num_inference_steps")
             if isinstance(default_steps, int):
                 steps = max(1, default_steps)

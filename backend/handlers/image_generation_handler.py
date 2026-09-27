@@ -20,7 +20,7 @@ from server_utils.media_validation import validate_image_file
 from services.media_crop import crop_image_media
 from services.image_edit import materialize_image_edit
 from services.reframe_wangp_mapping import ReframePadding, map_reframe_to_wangp
-from services.wangp_bridge import CUSTOM_FINETUNE_CHECKPOINT_KEY, WanGPBridge
+from services.wangp_bridge import WanGPBridge
 from state.app_state_types import AppState
 
 if TYPE_CHECKING:
@@ -111,9 +111,6 @@ class ImageGenerationHandler(StateHandlerBase):
                     preset_profile_id=profile.wangp_preset_profile_id,
                 )
                 wangp_default_settings.update(profile.wangp_default_settings)
-                custom_checkpoint = settings.custom_finetunes.get(profile.id)
-                if custom_checkpoint:
-                    wangp_default_settings[CUSTOM_FINETUNE_CHECKPOINT_KEY] = custom_checkpoint
             else:
                 wangp_default_settings = {}
             output_settings = settings.output_settings

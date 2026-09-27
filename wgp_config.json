@@ -114,7 +114,7 @@
   "notification_sound_volume": 50,
   "max_frames_multiplier": 1,
   "display_stats": 0,
-  "last_model_type": "aivs_minimax_h3_ref2va_hybrid_20b",
+  "last_model_type": "ltx2_25_22B_distilled",
   "last_model_per_family": {
     "music": "ace_step_v1_5_xl_turbo_lm_1_7b",
     "wan": "scail2_14B",
@@ -131,7 +131,7 @@
     "hunyuan_1_5": "hunyuan_1_5_480_i2v",
     "kandinsky5": "k5_lite_i2v",
     "longcat": "longcat_avatar_v1_5",
-    "minimax_h3": "aivs_minimax_h3_ref2va_hybrid_20b"
+    "minimax_h3": "minimax_h3_ref2va_pruned"
   },
   "last_model_per_type": {
     "ace_step_v1": "ace_step_v1",
@@ -175,8 +175,8 @@
     "t2v_2_2": "t2v_2_2",
     "shotplan_t2v_2_2": "shotplan_t2v_2_2",
     "minimax_h3_fl2va": "minimax_h3_fl2va",
-    "minimax_h3_ref2va_pruned": "aivs_minimax_h3_ref2va_hybrid_20b",
-    "minimax_h3_fl2va_pruned": "aivs_minimax_h3_fl2va_hybrid_20b"
+    "minimax_h3_ref2va_pruned": "minimax_h3_ref2va_pruned",
+    "minimax_h3_fl2va_pruned": "minimax_h3_fl2va_pruned"
   },
   "last_advanced_choice": true,
   "last_resolution_choice": "832x480",
@@ -189,7 +189,7 @@
   "model_output_filter": "video",
   "last_model_per_output_filter": {
     "audio": "ace_step_v1_5_xl_turbo_lm_1_7b",
-    "video": "aivs_minimax_h3_ref2va_hybrid_20b",
+    "video": "ltx2_25_22B_distilled",
     "image": "krea2_turbo_edit"
   }
 }

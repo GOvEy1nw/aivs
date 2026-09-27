@@ -112,7 +112,7 @@ class TestGenerate:
         call = enable_wangp.video_calls[-1]
         style_url = "https://huggingface.co/vrgamedevgirl84/LTX_2.3_Fantasy_Painterly_Style_LoRa/resolve/main/Fantasy_Painterly.safetensors"
         assert enable_wangp.style_lora_downloads == [
-            (style_url, "aivs_ltx2_25_22B_distilled")
+            (style_url, "ltx2_25_22B_distilled")
         ]
         assert call.default_settings["activated_loras"] == [
             "LTX-2.3_Cinematic_hardcut.safetensors",

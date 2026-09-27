@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { DownloadProgressView } from "./DownloadProgressView";
 import {
   useGenerationQueue,
   type GenerationQueueJob,
@@ -128,7 +129,14 @@ function JobRow({
       {job.error ? (
         <p className="mt-0.5 text-[11px] text-destructive">{job.error}</p>
       ) : null}
-      {active && typeof job.progress?.percent === "number" ? (
+      {active && job.progress?.modelDownload ? (
+        <DownloadProgressView
+          title="Downloading model"
+          transfer={job.progress.modelDownload}
+          compact
+          className="mt-1.5"
+        />
+      ) : active && typeof job.progress?.percent === "number" ? (
         <div className="mt-1.5 h-1 overflow-hidden rounded bg-surface-raised">
           <div
             className="h-full bg-primary"

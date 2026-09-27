@@ -54,7 +54,7 @@ Ok "uv sync complete"
 
 Write-Host ""
 Write-Host "Installing WanGP GPU stack (auto-detects your NVIDIA GPU)..."
-$WanGPRoot = if ($env:WANGP_ROOT) { $env:WANGP_ROOT } else { $env:WANGP_WGP_PATH }
+$WanGPRoot = if ($env:WANGP_ROOT) { $env:WANGP_ROOT } elseif ($env:WANGP_WGP_PATH) { $env:WANGP_WGP_PATH } else { 'C:\Wan2GP' }
 & (Join-Path $ScriptDir "install-wangp-stack.ps1") -WanGPRoot $WanGPRoot
 if ($LASTEXITCODE -ne 0) {
     Fail "WanGP stack install failed"

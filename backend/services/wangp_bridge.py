@@ -11,20 +11,22 @@ import re
 import sys
 import threading
 import time
-from copy import deepcopy
 from collections import deque
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor, wait
+from contextlib import chdir
 from dataclasses import dataclass
 from numbers import Real
 from pathlib import Path
+from queue import Empty, SimpleQueue
 from typing import Any, cast
 
-from progress_types import DownloadUnit, ModelDownloadProgress
+from services.wangp_downloads import download_context, download_progress, session_downloads
+from services.wangp_profiles import resolve_profiles
 
 logger = logging.getLogger(__name__)
 AUDIO_PROFILE_THREE_PLUS = 3.5
 CUSTOM_FINETUNE_CHECKPOINT_KEY = "_aivs_custom_checkpoint"
-_CUSTOM_FINETUNE_EXTENSIONS = {".safetensors", ".gguf"}
 
 
 def resolve_audio_performance_profile(global_profile: float) -> float:
@@ -94,9 +96,6 @@ class WanGPBridge:
         self._extra_args = tuple(extra_args)
         self._session = None
         self._submitted_manifest_once = False
-        self._last_submitted_model_type: str | None = None
-        self._last_submitted_custom_checkpoint: str | None = None
-        self._last_submission_state_unknown = False
         self._session_lock = threading.Lock()
         self._last_preview_write_at = 0.0
         self._preview_options: dict[str, object] = {
@@ -300,35 +299,12 @@ class WanGPBridge:
         accelerator_profile_id: str | None = None,
         preset_profile_id: str | None = None,
     ) -> dict[str, object]:
-        session = self._get_session()
-        has_profiles = (
-            accelerator_profile_id is not None or preset_profile_id is not None
+        return resolve_profiles(
+            self._get_session(),
+            model_type,
+            accelerator_profile_id=accelerator_profile_id,
+            preset_profile_id=preset_profile_id,
         )
-        resolver_name = "resolve_profiles" if has_profiles else "get_default_settings"
-        resolver = getattr(session, resolver_name, None)
-        if not callable(resolver):
-            raise RuntimeError(
-                f"WanGP runtime does not support {resolver_name}; update Wan2GP."
-            )
-        try:
-            settings = (
-                resolver(
-                    model_type,
-                    accelerator_profile_id=accelerator_profile_id,
-                    preset_profile_id=preset_profile_id,
-                )
-                if has_profiles
-                else resolver(model_type)
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"WanGP {resolver_name} failed for '{model_type}': {exc}"
-            ) from exc
-        if not isinstance(settings, dict):
-            raise RuntimeError(
-                f"WanGP {resolver_name} returned invalid settings for '{model_type}'."
-            )
-        return deepcopy(cast(dict[str, object], settings))
 
     def generate_video(
         self,
@@ -474,10 +450,46 @@ class WanGPBridge:
         )
         session = self._get_session()
         runtime = session._ensure_runtime()
-        # ponytail: WanGP's downloader has no cancellation callback; check around its one blocking call.
-        runtime.module.download_models(
-            "", model_type, file_type=1, model_def={"loras": [source_url]}
+
+        def download(gen: dict[str, Any]) -> None:
+            runtime.module.download_models(
+                "", model_type, file_type=1, model_def={"loras": [source_url]}, gen=gen,
+            )
+
+        if self._root is None:
+            raise RuntimeError("WanGP runtime is unavailable")
+        self._run_native_download(
+            runtime_root=self._root,
+            download=download,
+            on_progress=on_progress,
+            is_cancelled=is_cancelled,
         )
+
+    def _run_native_download(
+        self,
+        *,
+        runtime_root: Path,
+        download: Callable[[dict[str, Any]], None],
+        on_progress: ProgressCallback,
+        is_cancelled: CancelledCallback,
+    ) -> None:
+        updates: SimpleQueue[object] = SimpleQueue()
+        cancelled = threading.Event()
+
+        def run() -> None:
+            with chdir(runtime_root):
+                download(download_context(updates.put, cancelled.is_set))
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run)
+            while True:
+                if is_cancelled():
+                    cancelled.set()
+                done, _ = wait((future,), timeout=0.2)
+                self._emit_download_updates(updates, on_progress)
+                if done:
+                    future.result()
+                    break
         if is_cancelled():
             raise RuntimeError("Generation was cancelled")
 
@@ -505,15 +517,8 @@ class WanGPBridge:
         model_type = effective_settings.get("model_type")
         if isinstance(model_type, str) and model_type.startswith("ltx"):
             effective_settings["config"] = ""
-        preview_data: dict[str, object] = {}
-        if isinstance(model_type, str) and (
-            model_type.startswith(("ltx", "aivs_ltx2_"))
-            or model_type.startswith(("minimax_h3_", "aivs_minimax_h3_"))
-        ):
-            with self._session_lock:
-                preview_data = {"_preview": dict(self._preview_options)}
         outputs = self._run_manifest(
-            manifest=[{"id": 1, "params": effective_settings, "plugin_data": preview_data}],
+            manifest=[{"id": 1, "params": effective_settings, "plugin_data": {}}],
             media_suffixes={".mp4", ".mov", ".mkv", ".avi", ".webm", ".mp3", ".wav", ".ogg", ".aac", ".flac", ".m4a"},
             on_progress=on_progress,
             is_cancelled=is_cancelled,
@@ -925,21 +930,45 @@ class WanGPBridge:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._config_dir.mkdir(parents=True, exist_ok=True)
         on_progress("starting_wangp", 2, None, None)
-        job = session.submit_media_postprocessing(
-            str(Path(source_path).resolve()),
-            spatial_upsampling=spatial_upsampler,
-            return_media=False,
-        )
         suffixes = {".png", ".jpg", ".jpeg", ".webp"} if media_kind == "image" else {".mp4", ".mov", ".mkv", ".avi", ".webm"}
-        outputs = self._wait_for_job(
-            job=job,
-            media_suffixes=suffixes,
-            on_progress=on_progress,
-            is_cancelled=is_cancelled,
-        )
+        updates: SimpleQueue[object] = SimpleQueue()
+        with session_downloads(session, updates.put, lambda: False):
+            job = session.submit_media_postprocessing(
+                str(Path(source_path).resolve()),
+                spatial_upsampling=spatial_upsampler,
+                return_media=False,
+            )
+            outputs = self._wait_for_job(
+                job=job,
+                media_suffixes=suffixes,
+                on_progress=on_progress,
+                is_cancelled=is_cancelled,
+                download_updates=updates,
+            )
         if not outputs:
             raise RuntimeError("WanGP completed without producing upscaled media")
         return self._select_final_output(outputs)
+
+    @staticmethod
+    def _download_callback(on_progress: ProgressCallback, model_type: str | None = None) -> Callable[[object], None]:
+        def callback(update: object) -> None:
+            progress = download_progress(update, model_type)
+            if progress is not None:
+                on_progress(
+                    "downloading_model", 3, None, None, None, None, None, None,
+                    "Downloading model", None, progress.filename,
+                    round(progress.percent) if progress.percent is not None else None,
+                    None, progress.unit, progress,
+                )
+        return callback
+
+    def _emit_download_updates(self, updates: SimpleQueue[object], on_progress: ProgressCallback) -> None:
+        while True:
+            try:
+                update = updates.get_nowait()
+            except Empty:
+                return
+            self._download_callback(on_progress)(update)
 
     def _run_manifest(
         self,
@@ -949,15 +978,9 @@ class WanGPBridge:
         on_progress: ProgressCallback,
         is_cancelled: CancelledCallback,
     ) -> list[str]:
+        self._reject_custom_finetune_request(manifest)
+        self._manifest_model_type(manifest)
         session = self._get_session()
-        custom_checkpoint = self._pop_custom_finetune_checkpoint(manifest)
-        model_type = self._manifest_model_type(manifest)
-        checkpoint = (
-            self._validate_custom_finetune_checkpoint(custom_checkpoint)
-            if custom_checkpoint is not None
-            else None
-        )
-        effective_checkpoint = str(checkpoint) if checkpoint is not None else None
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -966,79 +989,19 @@ class WanGPBridge:
         on_progress(startup_phase, 2, None, None)
         import json
         self._apply_output_settings(session, manifest)
-        try:
-            self._reload_model_for_checkpoint_change(
-                session, model_type, effective_checkpoint
+        self._apply_native_preview_setting(session)
+        logger.info("Submitting WanGP manifest: %s", json.dumps(manifest, indent=2))
+        updates: SimpleQueue[object] = SimpleQueue()
+        with session_downloads(session, updates.put, lambda: False):
+            job = session.submit_manifest(manifest)
+            outputs = self._wait_for_job(
+                job=job,
+                media_suffixes=media_suffixes,
+                on_progress=on_progress,
+                is_cancelled=is_cancelled,
+                download_updates=updates,
             )
-            if checkpoint is None:
-                logger.info("Submitting WanGP manifest: %s", json.dumps(manifest, indent=2))
-                job = session.submit_manifest(manifest)
-                outputs = self._wait_for_job(
-                    job=job,
-                    media_suffixes=media_suffixes,
-                    on_progress=on_progress,
-                    is_cancelled=is_cancelled,
-                )
-            else:
-                runtime = session._ensure_runtime()
-                models_def_value = getattr(runtime.module, "models_def", None)
-                if not isinstance(models_def_value, dict):
-                    raise RuntimeError(
-                        "CUSTOM_FINETUNE_RUNTIME_UNAVAILABLE: WanGP model definitions are unavailable."
-                    )
-                models_def = cast(dict[str, object], models_def_value)
-                model_definition_value = models_def.get(model_type)
-                if not isinstance(model_definition_value, dict):
-                    raise RuntimeError(
-                        f"CUSTOM_FINETUNE_MODEL_UNAVAILABLE: WanGP model '{model_type}' is unavailable."
-                    )
-                model_definition = cast(dict[str, object], model_definition_value)
-                if "URLs" not in model_definition:
-                    raise RuntimeError(
-                        f"CUSTOM_FINETUNE_MODEL_UNSUPPORTED: WanGP model '{model_type}' has no checkpoint URLs."
-                    )
-
-                original_urls = model_definition["URLs"]
-                try:
-                    model_definition["URLs"] = [effective_checkpoint]
-                    logger.info(
-                        "Submitting WanGP manifest with a custom finetune for %s", model_type
-                    )
-                    job = session.submit_manifest(manifest)
-                    outputs = self._wait_for_job(
-                        job=job,
-                        media_suffixes=media_suffixes,
-                        on_progress=on_progress,
-                        is_cancelled=is_cancelled,
-                    )
-                finally:
-                    model_definition["URLs"] = original_urls
-        except Exception:
-            self._last_submitted_model_type = model_type
-            self._last_submitted_custom_checkpoint = effective_checkpoint
-            self._last_submission_state_unknown = True
-            raise
-
-        self._last_submitted_model_type = model_type
-        self._last_submitted_custom_checkpoint = effective_checkpoint
-        self._last_submission_state_unknown = False
         return outputs
-
-    def _reload_model_for_checkpoint_change(
-        self, session: object, model_type: str, checkpoint: str | None
-    ) -> None:
-        if (
-            self._last_submitted_model_type != model_type
-            or (
-                not self._last_submission_state_unknown
-                and self._last_submitted_custom_checkpoint == checkpoint
-            )
-        ):
-            return
-        close = getattr(session, "close", None)
-        if not callable(close):
-            raise RuntimeError("CUSTOM_FINETUNE_RUNTIME_UNAVAILABLE: WanGP session cannot reload models.")
-        close()
 
     @staticmethod
     def _manifest_model_type(manifest: list[dict[str, object]]) -> str:
@@ -1051,41 +1014,20 @@ class WanGPBridge:
         model_type = params.get("model_type") if params is not None else None
         if not isinstance(model_type, str):
             raise RuntimeError(
-                "CUSTOM_FINETUNE_MODEL_UNAVAILABLE: generation model is unavailable."
+                "WANGP_MODEL_UNAVAILABLE: generation model is unavailable."
+            )
+        if model_type.startswith("aivs_"):
+            raise RuntimeError(
+                f"UNSUPPORTED_WANGP_MODEL_TYPE: '{model_type}' is not available in the native WanGP runtime."
             )
         return model_type
 
     @staticmethod
-    def _validate_custom_finetune_checkpoint(value: object) -> Path:
-        if not isinstance(value, str) or not value.strip():
-            raise RuntimeError("CUSTOM_FINETUNE_INVALID_PATH: select a local checkpoint file.")
-        checkpoint = Path(value).expanduser().resolve()
-        if checkpoint.suffix.lower() not in _CUSTOM_FINETUNE_EXTENSIONS:
-            raise RuntimeError(
-                "CUSTOM_FINETUNE_UNSUPPORTED_FORMAT: use a .safetensors or .gguf checkpoint."
-            )
-        if not checkpoint.is_file():
-            raise RuntimeError(f"CUSTOM_FINETUNE_FILE_NOT_FOUND: {checkpoint}")
-        return checkpoint
-
-    @staticmethod
-    def _pop_custom_finetune_checkpoint(manifest: list[dict[str, object]]) -> object | None:
-        checkpoints: list[object] = []
+    def _reject_custom_finetune_request(manifest: list[dict[str, object]]) -> None:
         for item in manifest:
             params_value = item.get("params")
-            if isinstance(params_value, dict):
-                params = cast(dict[str, object], params_value)
-            else:
-                continue
-            if CUSTOM_FINETUNE_CHECKPOINT_KEY in params:
-                checkpoints.append(params.pop(CUSTOM_FINETUNE_CHECKPOINT_KEY))
-        if not checkpoints:
-            return None
-        if len(checkpoints) != 1:
-            raise RuntimeError(
-                "CUSTOM_FINETUNE_MANIFEST_UNSUPPORTED: expected one custom checkpoint."
-            )
-        return checkpoints[0]
+            if isinstance(params_value, dict) and CUSTOM_FINETUNE_CHECKPOINT_KEY in params_value:
+                raise RuntimeError("CUSTOM_FINETUNE_UNSUPPORTED: custom finetunes are no longer supported.")
 
     def _wait_for_job(
         self,
@@ -1094,6 +1036,7 @@ class WanGPBridge:
         media_suffixes: set[str],
         on_progress: ProgressCallback,
         is_cancelled: CancelledCallback,
+        download_updates: SimpleQueue[object] | None = None,
     ) -> list[str]:
         self._last_preview_write_at = 0.0
         error_lines: deque[str] = deque(maxlen=40)
@@ -1108,6 +1051,9 @@ class WanGPBridge:
             event = job.events.get(timeout=0.2)
             if event is not None:
                 self._handle_event(event, on_progress, error_lines, console_progress)
+
+            if download_updates is not None:
+                self._emit_download_updates(download_updates, on_progress)
 
             if job.done and event is None:
                 break
@@ -1181,24 +1127,14 @@ class WanGPBridge:
             current_step = self._optional_non_negative_int(getattr(data, "current_step", None))
             total_steps = self._optional_non_negative_int(getattr(data, "total_steps", None))
             status_text = str(getattr(data, "status", "")).strip()
-            progress_unit, model_download = self._extract_model_download_progress(
-                data,
-                phase=phase,
-                current_step=current_step,
-                total_steps=total_steps,
-            )
-            progress = (
-                max(0, min(100, raw_progress))
-                if progress_unit is not None
-                else self._scale_phase_progress(phase, raw_progress, current_step, total_steps)
-            )
+            progress = self._scale_phase_progress(phase, raw_progress, current_step, total_steps)
             detail = self._parse_progress_detail(status_text, phase)
             self._emit_console_progress(
                 console_progress,
                 phase,
                 progress,
-                None if progress_unit is not None else current_step,
-                None if progress_unit is not None else total_steps,
+                current_step,
+                total_steps,
                 status_text,
             )
             on_progress(
@@ -1211,14 +1147,6 @@ class WanGPBridge:
                 detail["section_index"],
                 detail["section_count"],
                 status_text or None,
-                None,
-                model_download.filename if model_download is not None else None,
-                round(model_download.percent)
-                if model_download is not None and model_download.percent is not None
-                else None,
-                None,
-                progress_unit,
-                model_download,
             )
             return
 
@@ -1250,8 +1178,18 @@ class WanGPBridge:
             progress = int(getattr(data, "progress", 0))
             current_step = getattr(data, "current_step", None)
             total_steps = getattr(data, "total_steps", None)
-            preview_url = self._write_preview_media(getattr(data, "media", None))
-            if preview_url is None:
+            video = getattr(data, "video", None)
+            if isinstance(video, bytes) and video:
+                video_bytes = video
+                video_was_throttled = (
+                    time.monotonic() - self._last_preview_write_at < _PREVIEW_WRITE_INTERVAL_SECONDS
+                )
+                preview_url = self._write_preview_file(
+                    ".mp4", lambda preview_path: preview_path.write_bytes(video_bytes)
+                )
+                if preview_url is None and not video_was_throttled:
+                    preview_url = self._write_preview_image(getattr(data, "image", None))
+            else:
                 preview_url = self._write_preview_image(getattr(data, "image", None))
             detail = self._parse_progress_detail(status_text, phase)
             on_progress(
@@ -1322,84 +1260,6 @@ class WanGPBridge:
             return None
         number = float(value)
         return int(number) if math.isfinite(number) and number >= 0 else None
-
-    @staticmethod
-    def _optional_non_negative_float(value: object) -> float | None:
-        if isinstance(value, bool) or not isinstance(value, Real):
-            return None
-        number = float(value)
-        return number if math.isfinite(number) and number >= 0 else None
-
-    @staticmethod
-    def _optional_string(value: object) -> str | None:
-        return value.strip() if isinstance(value, str) and value.strip() else None
-
-    def _extract_model_download_progress(
-        self,
-        data: object,
-        *,
-        phase: str,
-        current_step: int | None,
-        total_steps: int | None,
-    ) -> tuple[DownloadUnit | None, ModelDownloadProgress | None]:
-        raw_details = getattr(data, "details", None)
-        details: Mapping[object, object] = (
-            cast(Mapping[object, object], raw_details)
-            if isinstance(raw_details, Mapping)
-            else cast(Mapping[object, object], {})
-        )
-        unit_value = getattr(data, "unit", None)
-        unit: DownloadUnit | None = (
-            unit_value if unit_value == "bytes" or unit_value == "files" else None
-        )
-        if unit is None or not (
-            details.get("kind") == "model_download" or phase == "downloading_model"
-        ):
-            return None, None
-
-        if unit == "bytes":
-            current = current_step
-            if current is None:
-                current = self._optional_non_negative_int(details.get("downloaded_bytes"))
-            total = total_steps
-            if total is None:
-                total = self._optional_non_negative_int(details.get("total_bytes"))
-        else:
-            current = current_step
-            if current is None:
-                current = self._optional_non_negative_int(details.get("completed_files"))
-            total = total_steps
-            if total is None:
-                total = self._optional_non_negative_int(details.get("total_files"))
-
-        if total is not None and total <= 0:
-            total = None
-        current = current or 0
-        percent = min(100.0, current / total * 100) if total is not None else None
-        return unit, ModelDownloadProgress(
-            phase=self._optional_string(details.get("phase")),
-            model_type=self._optional_string(details.get("model_type")),
-            model_name=self._optional_string(details.get("model_name")),
-            source=self._optional_string(details.get("source")),
-            repo_id=self._optional_string(details.get("repo_id")),
-            filename=self._optional_string(details.get("filename")),
-            unit=unit,
-            current=current,
-            total=total,
-            percent=percent,
-            speed_bps=(
-                self._optional_non_negative_float(details.get("speed_bps"))
-                if unit == "bytes"
-                else None
-            ),
-            eta_seconds=(
-                self._optional_non_negative_float(details.get("eta_seconds"))
-                if unit == "bytes"
-                else None
-            ),
-            file_index=self._optional_non_negative_int(details.get("file_index")),
-            file_count=self._optional_non_negative_int(details.get("file_count")),
-        )
 
     @staticmethod
     def _estimate_progress(phase: str, current_step: int | None, total_steps: int | None) -> int:
@@ -1604,20 +1464,6 @@ class WanGPBridge:
             lambda preview_path: save(preview_path, format="JPEG", quality=85),
         )
 
-    def _write_preview_media(self, media: object) -> str | None:
-        data = getattr(media, "data", None)
-        mime_type = getattr(media, "mime_type", None)
-        if not isinstance(mime_type, str) or not isinstance(data, bytes):
-            return None
-        suffix = {
-            "image/webp": ".webp",
-            "image/gif": ".gif",
-            "video/mp4": ".mp4",
-        }.get(mime_type)
-        if suffix is None:
-            return None
-        return self._write_preview_file(suffix, lambda preview_path: preview_path.write_bytes(data))
-
     def _write_preview_file(
         self,
         suffix: str,
@@ -1672,6 +1518,22 @@ class WanGPBridge:
                 cast(dict[str, object], server_config).update(patch)
         except Exception:
             logger.debug("Could not apply WanGP output settings", exc_info=True)
+
+    def _apply_native_preview_setting(self, session: object) -> None:
+        with self._session_lock:
+            mode = self._preview_options.get("mode")
+        generation_preview: str = (
+            mode
+            if isinstance(mode, str) and mode in {"tiny_vae_frames", "tiny_vae_video"}
+            else "tiny_vae_video" if mode == "tae" else "rgb"
+        )
+        native_session = cast(Any, session)
+        runtime = native_session._ensure_runtime()
+        server_config = runtime.module.server_config
+        if server_config.get("generation_preview") == generation_preview:
+            return
+        native_session.close()
+        server_config["generation_preview"] = generation_preview
 
     @staticmethod
     def _select_final_output(outputs: list[str]) -> str:

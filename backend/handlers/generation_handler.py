@@ -22,6 +22,18 @@ from state.app_state_types import (
 logger = logging.getLogger(__name__)
 
 
+def _download_response(progress: ModelDownloadProgress | None) -> ModelDownloadProgressResponse | None:
+    if progress is None:
+        return None
+    return ModelDownloadProgressResponse(
+        phase=progress.phase, modelType=progress.model_type, modelName=progress.model_name,
+        source=progress.source, repoId=progress.repo_id, filename=progress.filename,
+        unit=progress.unit, current=progress.current, total=progress.total,
+        percent=progress.percent, speedBps=progress.speed_bps, etaSeconds=progress.eta_seconds,
+        fileIndex=progress.file_index, fileCount=progress.file_count,
+    )
+
+
 class GenerationHandler(StateHandlerBase):
     def __init__(self, state: AppState, lock: RLock) -> None:
         super().__init__(state, lock)
@@ -90,11 +102,17 @@ class GenerationHandler(StateHandlerBase):
     ) -> None:
         if (context := self._bound_context()) is not None:
             job_id, queue = context
+            download = _download_response(model_download)
             queue.update_progress(job_id, phase, progress, {
                 "currentStep": current_step, "totalSteps": total_steps,
                 "phaseIndex": phase_index, "phaseCount": phase_count,
                 "sectionIndex": section_index, "sectionCount": section_count,
                 "statusDetail": status_detail, "previewUrl": preview_url,
+                "progressUnit": progress_unit,
+                "modelDownload": download.model_dump() if download is not None else None,
+                "downloadCurrentFile": model_download.filename if model_download is not None else download_current_file,
+                "downloadCurrentFileProgress": round(model_download.percent) if model_download is not None and model_download.percent is not None else download_current_file_progress,
+                "downloadTotalProgress": download_total_progress,
             })
             return
         if not isinstance(self.state.generation, GenerationRunning):
@@ -174,6 +192,11 @@ class GenerationHandler(StateHandlerBase):
                     "phaseCount": queue_progress.get("phaseCount"), "sectionIndex": queue_progress.get("sectionIndex"),
                     "sectionCount": queue_progress.get("sectionCount"), "statusDetail": queue_progress.get("statusDetail"),
                     "previewUrl": queue_progress.get("previewUrl"),
+                    "progressUnit": queue_progress.get("progressUnit"),
+                    "modelDownload": queue_progress.get("modelDownload"),
+                    "downloadCurrentFile": queue_progress.get("downloadCurrentFile"),
+                    "downloadCurrentFileProgress": queue_progress.get("downloadCurrentFileProgress"),
+                    "downloadTotalProgress": queue_progress.get("downloadTotalProgress"),
                 })
         match self.state.generation:
             case GenerationRunning(progress=progress):
@@ -197,26 +220,7 @@ class GenerationHandler(StateHandlerBase):
                         if progress.progress_unit in {"bytes", "files"}
                         else None
                     ),
-                    modelDownload=(
-                        ModelDownloadProgressResponse(
-                            phase=progress.model_download.phase,
-                            modelType=progress.model_download.model_type,
-                            modelName=progress.model_download.model_name,
-                            source=progress.model_download.source,
-                            repoId=progress.model_download.repo_id,
-                            filename=progress.model_download.filename,
-                            unit=progress.model_download.unit,
-                            current=progress.model_download.current,
-                            total=progress.model_download.total,
-                            percent=progress.model_download.percent,
-                            speedBps=progress.model_download.speed_bps,
-                            etaSeconds=progress.model_download.eta_seconds,
-                            fileIndex=progress.model_download.file_index,
-                            fileCount=progress.model_download.file_count,
-                        )
-                        if progress.model_download is not None
-                        else None
-                    ),
+                    modelDownload=_download_response(progress.model_download),
                 )
             case GenerationComplete():
                 return GenerationProgressResponse(status="complete", phase="complete", progress=100, currentStep=0, totalSteps=0)

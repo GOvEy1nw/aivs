@@ -75,7 +75,7 @@ AiVS is in active development. Director Mode V1 is available as a standalone wor
 - VRAM: 12 GB minimum for selective/light use, 16 GB recommended for image work, 24 GB recommended for LTX video and larger model packs. This is guidance, not an enforced hardware gate.
 - At least 50 GB free disk space where model packs are installed; more is needed for several packs and generated media.
 
-The desktop installer includes Python, pip, uv, MinGit and GPU runtime setup. On first run or repair it uses bundled MinGit to clone the current configured WanGP `AiVS` branch into app-managed runtime storage. It does not require Node.js, pnpm or a system Git installation.
+The desktop installer includes the independent Wan2GP source, Python, pip, uv and GPU runtime setup. First run copies the bundled Wan2GP source into a writable user-data folder identified by source content; it does not clone or update Wan2GP from the network. It does not require Node.js, pnpm or a system Git installation.
 
 ## Quick Start: Windows
 
@@ -95,9 +95,9 @@ pnpm setup:dev:win
 pnpm dev
 ```
 
-`setup:dev:win` prepares the backend environment and installs the WanGP GPU stack against an external Wan2GP checkout. It never fetches, switches, or modifies that checkout.
+`setup:dev:win` validates and uses `C:\Wan2GP` directly. It prepares the backend environment without cloning, switching, or patching Wan2GP source. Development and the browser launcher use that same folder; Git history is not required.
 
-To reuse an existing Wan2GP checkout:
+To use a Wan2GP checkout at another location:
 
 ```powershell
 $env:WANGP_ROOT = "D:\Wan2GP"
@@ -106,6 +106,8 @@ pnpm dev
 ```
 
 `WANGP_WGP_PATH` is accepted for compatibility when `WANGP_ROOT` is not set. The external checkout must contain `wgp.py`, `shared/api.py`, and `requirements.txt`.
+
+Release builds bundle the runtime code and native definitions from this folder, excluding local finetunes, model weights, outputs and caches. AiVS uses native Wan2GP model definitions and does not add custom checkpoint definitions.
 
 ## Quick Start: Linux
 

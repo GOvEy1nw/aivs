@@ -81,7 +81,7 @@ _ltx_fast_profile = ModelProfile(
         media_type="video",
         visible=True,
         status="stable",
-        wangp_model_type="aivs_ltx2_25_22B_distilled",
+        wangp_model_type="ltx2_25_22B_distilled",
         wangp_metadata=WanGPModelMetadata(
             family="ltx2",
             family_label="LTX-2",
@@ -348,7 +348,7 @@ _h3_quality_profile = ModelProfile(
         media_type="video",
         visible=True,
         status="experimental",
-        wangp_model_type="aivs_minimax_h3_fl2va_hybrid_20b",
+        wangp_model_type="minimax_h3_fl2va_pruned",
         wangp_metadata=WanGPModelMetadata(
             family="minimax_h3",
             family_label="MiniMax H3",
@@ -450,7 +450,7 @@ _ltx_quality_profile = _with_required_pack(
         _ltx_fast_profile,
         id="ltx2_25_quality",
         display_name="LTX 2.5 Quality",
-        wangp_model_type="aivs_ltx2_25_22B",
+        wangp_model_type="ltx2_25_22B",
         wangp_accelerator_profile_id="ltx2_25_two_stage_hq_res2s_15_3",
     ),
     "ltx2_quality",
@@ -461,8 +461,8 @@ _h3_fast_profile = _with_required_pack(
         id="minimax_h3_fast",
         display_name="MiniMax H3 Fast",
         wangp_accelerator_profile_ids={
-            "aivs_minimax_h3_fl2va_hybrid_20b": "aivs_h3_turbo_lightx2v_fl2v_4_steps_v0.1",
-            "aivs_minimax_h3_ref2va_hybrid_20b": "aivs_h3_turbo_lightx2v_fl2v_4_steps_v0.1",
+            "minimax_h3_fl2va_pruned": "aivs_h3_turbo_lightx2v_fl2v_4_steps_v0.1",
+            "minimax_h3_ref2va_pruned": "aivs_h3_turbo_lightx2v_ref2v_4_steps_v0.1",
         },
     ),
     "minimax-h3-fast",

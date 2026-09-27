@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from pydantic import ValidationError
 
 from state.app_settings import AppSettings, OutputSettings, UpdateSettingsRequest
@@ -76,7 +78,9 @@ class TestPostSettings:
         assert r.status_code == 200
         assert test_state.state.app_settings.use_torch_compile is True
 
-    def test_custom_finetunes_round_trip(self, client, test_state):
+    def test_custom_finetunes_are_rejected_but_legacy_settings_remain_inert(self, client, test_state):
+        legacy = {"z_image_turbo": r"E:\Models\z-image.safetensors"}
+        test_state.state.app_settings.custom_finetunes = legacy
         response = client.post(
             "/api/settings",
             json={
@@ -86,16 +90,8 @@ class TestPostSettings:
                 }
             },
         )
-        assert response.status_code == 200
-
-        custom_finetunes = {"z_image_turbo": r"E:\Models\z-image.safetensors"}
-        response = client.post("/api/settings", json={"customFinetunes": custom_finetunes})
-
-        assert response.status_code == 200
-        assert client.get("/api/settings").json()["customFinetunes"] == custom_finetunes
-        assert test_state.state.app_settings.custom_finetunes == custom_finetunes
-        saved = json.loads(test_state.config.settings_file.read_text(encoding="utf-8"))
-        assert saved["custom_finetunes"] == custom_finetunes
+        assert response.status_code == 422
+        assert test_state.state.app_settings.custom_finetunes == legacy
 
     def test_update_multiple_fields(self, client, test_state):
         r = client.post("/api/settings", json={"useTorchCompile": True, "loadOnStartup": True})
@@ -123,12 +119,13 @@ class TestPostSettings:
             "reduce_vram": "2",
         }
 
-    def test_update_preview_settings(self, client, test_state, wangp_bridge):
+    @pytest.mark.parametrize("mode", ["rgb", "tae", "tiny_vae_frames"])
+    def test_update_preview_settings(self, client, test_state, wangp_bridge, mode):
         r = client.post(
             "/api/settings",
             json={
                 "previewSettings": {
-                    "mode": "rgb",
+                    "mode": mode,
                     "updateRate": "every_2",
                     "device": "cpu",
                     "maxEdge": 768,
@@ -140,7 +137,7 @@ class TestPostSettings:
 
         assert r.status_code == 200
         assert wangp_bridge.preview_options == {
-            "mode": "rgb",
+            "mode": mode,
             "update_rate": "every_2",
             "device": "cpu",
             "max_edge": 768,

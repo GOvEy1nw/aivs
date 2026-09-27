@@ -215,6 +215,15 @@ class GenerationQueueHandler:
             job = self._state.jobs.get(job_id)
             if job is None or job_id != self._state.active_job_id or job.status != "running":
                 return
+            preview_url = detail.get("previewUrl")
+            previous_preview_url = (
+                job.progress.get("previewUrl") if isinstance(job.progress, dict) else None
+            )
+            if (
+                not isinstance(preview_url, str)
+                or not preview_url.strip()
+            ) and isinstance(previous_preview_url, str) and previous_preview_url.strip():
+                detail = {**detail, "previewUrl": previous_preview_url}
             job.progress = {"phase": phase, "percent": max(0, min(100, progress)), "updatedAt": _now(), **detail}
             self._condition.notify_all()
 

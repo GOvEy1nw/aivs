@@ -7,10 +7,13 @@ import sys
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
+
 from wangp_model_packs import (
     PACKS,
     _delete_pack_files,
     _download_model_dependencies,
+    _download_pack,
     _load_state,
     _pack_model_def,
     _pack_progress_callback,
@@ -62,14 +65,34 @@ def test_curated_video_packs_resolve_profiles_or_model_defaults() -> None:
     source = {"config": "upstream", "nested": {"value": 1}}
     calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
 
+    class Module:
+        def are_model_types_compatible(self, _source: str, _target: str) -> bool:
+            return True
+
+        def merge_loras_settings(
+            self,
+            _old_loras: list[str],
+            _old_multipliers: str,
+            loras: list[str],
+            multipliers: str,
+            _mode: str,
+        ) -> tuple[list[str], str]:
+            return loras, multipliers
+
+        def fix_settings(self, _model_type: str, _settings: dict[str, object], **_kwargs: object) -> None:
+            return None
+
     class Session:
         def get_default_settings(self, model_type: str) -> dict[str, object]:
             calls.append(("defaults", (model_type,), {}))
             return source
 
-        def resolve_profiles(self, model_type: str, **kwargs: object) -> dict[str, object]:
-            calls.append(("profiles", (model_type,), kwargs))
-            return {"activated_loras": [str(kwargs["accelerator_profile_id"])]}
+        def get_model_settings(self, model_type: str, setting_id: str | None = None) -> dict[str, object]:
+            calls.append(("profile", (model_type, setting_id), {}))
+            return {"content": {"profile": setting_id}}
+
+        def _ensure_runtime(self) -> object:
+            return SimpleNamespace(module=Module())
 
     session = Session()
     h3_settings = _resolve_pack_profile_settings(
@@ -95,20 +118,17 @@ def test_curated_video_packs_resolve_profiles_or_model_defaults() -> None:
     assert h3_settings["config"] == "upstream"
     assert source == {"config": "upstream", "nested": {"value": 1}}
     assert ltx_settings == {"config": "upstream", "nested": {"value": 1}}
-    assert h3_fast_settings == {
-        "activated_loras": ["aivs_h3_turbo_lightx2v_ref2v_4_steps_v0.1"]
-    }
+    assert h3_fast_settings["profile"] == (
+        "accelerator_profile:minimax_h3_ref2va/Turbo Lightx2v Ref2V 4 Steps v0.1.json"
+    )
+    assert h3_fast_settings["model_type"] == "minimax_h3_ref2va_pruned"
+    assert h3_fast_settings["activated_loras"] == []
+    assert h3_fast_settings["loras_multipliers"] == ""
     assert calls == [
         ("defaults", ("minimax_h3_fl2va_pruned",), {}),
         ("defaults", ("ltx2_25_22B_distilled",), {}),
-        (
-            "profiles",
-            ("minimax_h3_ref2va_pruned",),
-            {
-                "accelerator_profile_id": "aivs_h3_turbo_lightx2v_ref2v_4_steps_v0.1",
-                "preset_profile_id": None,
-            },
-        ),
+        ("defaults", ("minimax_h3_ref2va_pruned",), {}),
+        ("profile", ("minimax_h3_ref2va_pruned", "accelerator_profile:minimax_h3_ref2va/Turbo Lightx2v Ref2V 4 Steps v0.1.json"), {}),
     ]
     assert _resolve_pack_profile_settings(
         session,
@@ -127,10 +147,10 @@ def test_mmaudio_pack_uses_registered_audio_processor() -> None:
 
 
 def test_ideogram4_packs_use_requested_wangp_model_profiles() -> None:
-    assert PACKS["ideogram4_int8"]["model_type"] == "ideogram4_int8"
+    assert PACKS["ideogram4_int8"]["model_type"] == "ideogram4"
     assert (
         PACKS["ideogram4_turbotime_int8"]["model_type"]
-        == "ideogram4_turbotime_int8"
+        == "ideogram4_turbotime"
     )
 
 
@@ -206,19 +226,19 @@ class FakeWanGP:
         file_type: int,
         submodel_no: int = 1,
         force_path: str | None = None,
-        progress_callback: object = None,
+        gen: dict[str, object] | None = None,
         model_def: Any = None,
     ) -> None:
         del model_def
         self.downloads.append((filename, model_type, file_type, submodel_no, force_path))
-        self.callbacks.append(progress_callback)
+        self.callbacks.append(gen)
 
 
 def test_download_model_dependencies_matches_wangp_generation_preflight() -> None:
     wgp = FakeWanGP()
-    callback = lambda _update: None
+    context = {"download_progress_callback": lambda _update: None, "abort_callback": lambda: True}
 
-    _download_model_dependencies(wgp, "example", callback)
+    _download_model_dependencies(wgp, "example", context)
 
     assert wgp.downloads == [
         ("main:1", "example", 0, 1, None),
@@ -228,7 +248,7 @@ def test_download_model_dependencies_matches_wangp_generation_preflight() -> Non
         ("urls:['right']", "example", 1, 2, None),
         ("urls:['text_encoder']", "example", 2, -1, "text_encoder"),
     ]
-    assert wgp.callbacks == [callback] * len(wgp.downloads)
+    assert wgp.callbacks == [context] * len(wgp.downloads)
 
 
 def test_pack_model_def_applies_profile_settings_before_explicit_pack_overrides(monkeypatch) -> None:
@@ -286,50 +306,52 @@ def test_pack_model_def_applies_profile_settings_before_explicit_pack_overrides(
     }
 
 
-def test_process_download_definitions_forwards_callback() -> None:
+def test_process_download_definitions_forwards_native_context() -> None:
     calls: list[dict[str, object]] = []
 
     class FakeDefinitionsWanGP:
         def process_files_def(self, **values: object) -> None:
             calls.append(values)
 
-    callback = lambda _update: None
+    context = {"download_progress_callback": lambda _update: None, "abort_callback": lambda: False}
     _process_download_definitions(
         FakeDefinitionsWanGP(),
         [{"repoId": "one"}, {"repoId": "two"}],
-        callback,
+        context,
     )
 
     assert calls == [
-        {"repoId": "one", "progress_callback": callback},
-        {"repoId": "two", "progress_callback": callback},
+        {"repoId": "one", "gen": context},
+        {"repoId": "two", "gen": context},
     ]
 
 
 def test_pack_progress_callback_emits_safe_structured_event(capsys) -> None:
     callback = _pack_progress_callback("ltx2_fast", "LTX 2.5 Fast", 2, 3)
-    callback(
-        SimpleNamespace(
-            phase="downloading",
-            source="huggingface",
-            repo_id="owner/repo",
-            filename="model.safetensors",
-            unit="bytes",
-            current=50,
-            total=100,
-            speed_bps=25.0,
-            eta_seconds=2.0,
-            file_index=1,
-            file_count=2,
-        )
-    )
+    callback({"filename": "model.safetensors", "completed": 50, "total": 100, "speed": 25.0, "file_index": 1, "file_count": 2})
 
     line = capsys.readouterr().out.strip()
     assert line.startswith("AIVS_PACK:")
     assert '"packIndex": 2' in line
     assert '"packCount": 3' in line
-    assert '"repoId": "owner/repo"' in line
     assert '"filename": "model.safetensors"' in line
+    assert '"speedBps": 25.0' in line
+
+
+def test_download_pack_requires_validated_paths_before_completion(monkeypatch, tmp_path: Path) -> None:
+    import wangp_model_packs
+
+    monkeypatch.setitem(
+        PACKS,
+        "test-pack",
+        {"name": "Test", "kind": "model", "model_type": "example"},
+    )
+    monkeypatch.setattr(wangp_model_packs, "_download_model_dependencies", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(wangp_model_packs, "_effective_pack_model_def", lambda *_args: {})
+    monkeypatch.setattr(wangp_model_packs, "_resolve_pack_paths", lambda *_args: {tmp_path / "missing.safetensors"})
+
+    with pytest.raises(RuntimeError, match="incomplete; missing"):
+        _download_pack(object(), object(), object(), "test-pack")
 
 
 def test_legacy_completion_marker_is_not_treated_as_verified(tmp_path: Path) -> None:

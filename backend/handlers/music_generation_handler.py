@@ -20,6 +20,7 @@ from handlers.base import StateHandlerBase
 from handlers.generation_handler import GenerationHandler
 from model_profiles import get_image_profile, get_music_profile, get_video_profile
 from model_profiles.profiles import ModelProfile
+from progress_types import ModelDownloadProgress
 from services.audio_metadata import probe_audio_metadata
 from services.music_request_resolver import (
     ResolvedAudioTask,
@@ -119,14 +120,17 @@ class MusicGenerationHandler(StateHandlerBase):
                     aggregate = round(
                         ((_variation_index + progress / 100.0) / req.variations) * 100
                     )
+                    download = detail[12] if len(detail) > 12 else None
+                    download = download if isinstance(download, ModelDownloadProgress) else None
+                    status = detail[6] if len(detail) > 6 else None
                     self._generation.update_progress(
                         phase,
                         aggregate,
                         section_index=_variation_index + 1,
                         section_count=req.variations,
-                        status_detail=(
-                            str(detail[0]) if detail and isinstance(detail[0], str) else None
-                        ),
+                        status_detail=status if isinstance(status, str) else None,
+                        model_download=download,
+                        progress_unit=download.unit if download is not None else None,
                     )
 
                 default_settings = dict(wangp_default_settings)

@@ -1028,17 +1028,17 @@ IMAGE_PROFILES: tuple[ModelProfile, ...] = (
     ),
     ModelProfile(
         id="ideogram4_int8",
-        display_name="Ideogram 4 Standard",
+        display_name="Ideogram 4",
         media_type="image",
         visible=True,
         status="stable",
-        wangp_model_type="aivs_ideogram4_int8",
+        wangp_model_type="ideogram4",
         wangp_metadata=_image_wangp_metadata(
             family="ideogram4",
             family_label="Ideogram",
             base_model_type="ideogram4",
             inputs=("text",),
-            finetune=True,
+            finetune=False,
             setting_values=_image_setting_values(
                 sample_solver={
                     "choices": [
@@ -1080,13 +1080,13 @@ IMAGE_PROFILES: tuple[ModelProfile, ...] = (
         media_type="image",
         visible=True,
         status="stable",
-        wangp_model_type="aivs_ideogram4_turbotime_int8",
+        wangp_model_type="ideogram4_turbotime",
         wangp_metadata=_image_wangp_metadata(
             family="ideogram4",
             family_label="Ideogram",
             base_model_type="ideogram4_turbotime",
             inputs=("text",),
-            finetune=True,
+            finetune=False,
             setting_values=_image_setting_values(
                 sample_solver={
                     "choices": [

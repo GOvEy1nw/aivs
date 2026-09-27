@@ -26,7 +26,7 @@ from services.director_compiler import (
     compile_director_request,
 )
 from services.video_clip import extract_audio_clip, extract_video_clip, probe_video_metadata
-from services.wangp_bridge import CUSTOM_FINETUNE_CHECKPOINT_KEY, WanGPBridge
+from services.wangp_bridge import WanGPBridge
 from state.app_state_types import AppState
 
 if TYPE_CHECKING:
@@ -156,9 +156,6 @@ class DirectorGenerationHandler(StateHandlerBase):
                 preset_profile_id=profile.wangp_preset_profile_id,
             )
             profile_settings.update(profile.wangp_default_settings)
-            custom_checkpoint = self.state.app_settings.custom_finetunes.get(profile.id)
-            if custom_checkpoint:
-                profile_settings[CUSTOM_FINETUNE_CHECKPOINT_KEY] = custom_checkpoint
             settings = self._build_settings(
                 plan,
                 profile.wangp_model_type,

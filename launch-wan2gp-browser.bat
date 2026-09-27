@@ -2,19 +2,29 @@
 setlocal
 
 set "ROOT=%~dp0"
-set "VENV_ACTIVATE=%ROOT%backend\.venv\Scripts\activate.bat"
-set "WANGP_DIR=C:\Users\rais\Documents\GitHub\Wan2GP"
+set "VIRTUAL_ENV=%ROOT%backend\.venv"
+set "PYTHON_EXE=%VIRTUAL_ENV%\Scripts\python.exe"
+set "WANGP_DIR=%WANGP_ROOT%"
+if "%WANGP_DIR%"=="" set "WANGP_DIR=%WANGP_WGP_PATH%"
+if "%WANGP_DIR%"=="" set "WANGP_DIR=C:\Wan2GP"
+if /I "%WANGP_DIR:~-6%"=="wgp.py" for %%I in ("%WANGP_DIR%\..") do set "WANGP_DIR=%%~fI"
 
-if not exist "%VENV_ACTIVATE%" (
-    echo [!] Missing project venv: "%VENV_ACTIVATE%"
-    echo     Run project setup first, then try again.
+if not exist "%PYTHON_EXE%" (
+    echo [!] Missing project Python: "%PYTHON_EXE%"
+    echo     Run pnpm setup:dev:win first, then try again.
     pause
     exit /b 1
 )
 
 if not exist "%WANGP_DIR%\wgp.py" (
     echo [!] Missing Wan2GP entrypoint: "%WANGP_DIR%\wgp.py"
-    echo     Run scripts\ensure-wan2gp.ps1 first, then try again.
+    echo     Set WANGP_ROOT, WANGP_WGP_PATH, or place Wan2GP at C:\Wan2GP.
+    pause
+    exit /b 1
+)
+
+if not exist "%WANGP_DIR%\shared\api.py" (
+    echo [!] Wan2GP source is incomplete: "%WANGP_DIR%\shared\api.py"
     pause
     exit /b 1
 )
@@ -25,15 +35,14 @@ cd /d "%WANGP_DIR%" || (
     exit /b 1
 )
 
-call "%VENV_ACTIVATE%" || (
-    echo [!] Could not activate project venv.
-    pause
-    exit /b 1
-)
+rem Avoid activate.bat, which can retain an absolute path after moving the repo.
+set "PATH=%VIRTUAL_ENV%\Scripts;%PATH%"
+set "PYTHONHOME="
+set "WANGP_ROOT=%WANGP_DIR%"
 
 echo [*] Starting Wan2GP browser UI with project venv...
-echo [*] Command: python wgp.py --open-browser %*
-python wgp.py --open-browser %*
+echo [*] Command: "%PYTHON_EXE%" wgp.py --config "%ROOT%." --open-browser %*
+"%PYTHON_EXE%" wgp.py --config "%ROOT%." --open-browser %*
 
 set "EXIT_CODE=%ERRORLEVEL%"
 echo.

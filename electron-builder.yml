@@ -35,6 +35,8 @@ extraResources:
     to: python-bootstrap
   - from: git-bootstrap
     to: git
+  - from: resources/Wan2GP
+    to: Wan2GP
   - from: wgp_config.json
     to: wgp_config.json
   - from: scripts
@@ -42,9 +44,7 @@ extraResources:
     filter:
       - install-python-dependencies.ps1
       - install-wangp-stack.ps1
-      - ensure-wan2gp.ps1
       - wangp-stacks.json
-      - wangp-source.json
   - from: resources/vc_redist.x64.exe
     to: vc_redist.x64.exe
 

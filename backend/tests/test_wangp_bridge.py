@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import sys
 import os
+import threading
+import time
 from collections import deque
+from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,99 +41,22 @@ def _capture_progress_event(data: object) -> tuple[object, ...]:
     return captured[-1]
 
 
-def test_structured_model_download_preserves_exact_transfer_progress() -> None:
-    args = _capture_progress_event(
-        SimpleNamespace(
-            phase="downloading_model",
-            progress=10,
-            current_step=6_895_321_088,
-            total_steps=12_992_123_904,
-            unit="bytes",
-            status="Downloading LTX 2.3",
-            details={
-                "kind": "model_download",
-                "phase": "downloading",
-                "model_type": "ltx2_25_22B_distilled",
-                "model_name": "LTX 2.5 Fast",
-                "source": "huggingface",
-                "repo_id": "owner/repo",
-                "filename": "model-00003-of-00006.safetensors",
-                "speed_bps": 88_080_384.0,
-                "eta_seconds": 68.0,
-                "file_index": 3,
-                "file_count": 6,
-            },
-        )
-    )
-
-    transfer = args[14]
-    assert args[:4] == ("downloading_model", 10, 6_895_321_088, 12_992_123_904)
-    assert args[13] == "bytes"
+def test_native_model_download_preserves_exact_transfer_progress() -> None:
+    captured = []
+    callback = _make_bridge()._download_callback(lambda *args: captured.append(args), "ltx2_25_22B")
+    callback({
+        "completed": 6_895_321_088, "total": 12_992_123_904,
+        "filename": "model-00003-of-00006.safetensors",
+        "speed": 88_080_384.0, "file_index": 3, "file_count": 6,
+    })
+    transfer = captured[-1][14]
+    assert captured[-1][13] == "bytes"
+    assert transfer.current == 6_895_321_088
     assert transfer.filename == "model-00003-of-00006.safetensors"
-    assert transfer.repo_id == "owner/repo"
     assert transfer.speed_bps == 88_080_384.0
-    assert transfer.eta_seconds == 68.0
     assert round(transfer.percent, 1) == 53.1
-
-
-def test_structured_model_download_supports_file_counts_and_unknown_totals() -> None:
-    file_args = _capture_progress_event(
-        SimpleNamespace(
-            phase="downloading_model",
-            progress=10,
-            current_step=None,
-            total_steps=None,
-            unit="files",
-            status="Downloading snapshot",
-            details={
-                "kind": "model_download",
-                "completed_files": 3,
-                "total_files": 8,
-                "speed_bps": 99,
-            },
-        )
-    )
-    unknown_args = _capture_progress_event(
-        SimpleNamespace(
-            phase="downloading_model",
-            progress=10,
-            current_step=None,
-            total_steps=None,
-            unit="bytes",
-            status="Downloading file",
-            details={"kind": "model_download", "downloaded_bytes": 1234},
-        )
-    )
-
-    files = file_args[14]
-    unknown = unknown_args[14]
-    assert (files.unit, files.current, files.total, files.percent) == ("files", 3, 8, 37.5)
-    assert files.speed_bps is None
-    assert (unknown.current, unknown.total, unknown.percent) == (1234, None, None)
-
-
-def test_model_download_optional_details_are_defensive() -> None:
-    args = _capture_progress_event(
-        SimpleNamespace(
-            phase="downloading_model",
-            progress=10,
-            current_step=5,
-            total_steps=10,
-            unit="bytes",
-            status="Downloading model",
-            details={
-                "kind": "model_download",
-                "speed_bps": float("nan"),
-                "eta_seconds": -1,
-                "file_index": "bad",
-            },
-        )
-    )
-
-    transfer = args[14]
-    assert transfer.speed_bps is None
-    assert transfer.eta_seconds is None
-    assert transfer.file_index is None
+    callback(None)
+    assert len(captured) == 1
 
 
 def test_model_lifecycle_phase_classification_is_specific() -> None:
@@ -152,6 +78,24 @@ def _make_bridge(*, image_model_type: str = "z_image") -> WanGPBridge:
         camera_motion_prompts={},
         extra_args=(),
     )
+
+
+def test_configured_checkpoints_directory_updates_wangp_config(tmp_path: Path) -> None:
+    checkpoints_dir = tmp_path / "existing-wangp" / "ckpts"
+    WanGPBridge(
+        enabled=True,
+        root=tmp_path,
+        python_executable=None,
+        config_dir=tmp_path / "config",
+        output_dir=tmp_path / "outputs",
+        video_model_type="ltx2_25_22B_distilled",
+        image_model_type="z_image",
+        camera_motion_prompts={},
+        checkpoints_dir=checkpoints_dir,
+    )
+
+    saved = json.loads((tmp_path / "config" / "wgp_config.json").read_text(encoding="utf-8"))
+    assert saved["checkpoints_paths"] == [str(checkpoints_dir.resolve()), "."]
 
 
 def test_qwen_image_resolution_uses_native_16_9_preset() -> None:
@@ -422,24 +366,6 @@ def test_runtime_preferences_update_app_owned_wangp_config(tmp_path: Path, monke
     assert saved["boost"] == 1
 
 
-def test_custom_checkpoints_directory_updates_wangp_config(tmp_path: Path) -> None:
-    checkpoints_dir = tmp_path / "existing-wangp" / "ckpts"
-    WanGPBridge(
-        enabled=True,
-        root=tmp_path,
-        python_executable=None,
-        config_dir=tmp_path / "config",
-        output_dir=tmp_path / "outputs",
-        video_model_type="ltx2_25_22B_distilled",
-        image_model_type="z_image",
-        camera_motion_prompts={},
-        checkpoints_dir=checkpoints_dir,
-    )
-
-    saved = json.loads((tmp_path / "config" / "wgp_config.json").read_text(encoding="utf-8"))
-    assert saved["checkpoints_paths"] == [str(checkpoints_dir.resolve()), "."]
-
-
 def test_custom_loras_directory_updates_wangp_config(tmp_path: Path) -> None:
     loras_dir = tmp_path / "existing-wangp" / "loras"
     WanGPBridge(
@@ -466,75 +392,33 @@ def test_z_image_uses_eight_step_floor() -> None:
     assert bridge._normalize_image_steps(12) == 12
 
 
-def test_custom_finetune_override_is_job_scoped_and_restored(tmp_path: Path) -> None:
+def test_custom_finetune_request_is_rejected_without_session_mutation(tmp_path: Path) -> None:
     bridge = _make_bridge()
     bridge._output_dir = tmp_path / "outputs"
     bridge._config_dir = tmp_path / "config"
-    checkpoint = tmp_path / "custom.safetensors"
-    checkpoint.write_bytes(b"checkpoint")
-    model_definition: dict[str, object] = {"URLs": ["base.safetensors"]}
-    submissions: list[list[str]] = []
-    close_calls = 0
-
-    class FakeSession:
-        def _ensure_runtime(self):  # type: ignore[no-untyped-def]
-            return SimpleNamespace(
-                module=SimpleNamespace(models_def={"z_image": model_definition})
-            )
-
-        def submit_manifest(self, manifest):  # type: ignore[no-untyped-def]
-            assert CUSTOM_FINETUNE_CHECKPOINT_KEY not in manifest[0]["params"]
-            submissions.append(cast(list[str], model_definition["URLs"]))
-            return object()
-
-        def close(self) -> None:
-            nonlocal close_calls
-            close_calls += 1
-
-    bridge._get_session = lambda: FakeSession()  # type: ignore[method-assign]
-    bridge._wait_for_job = lambda **_kwargs: ["E:/tmp/out.png"]  # type: ignore[method-assign]
-
-    def run(checkpoint_path: str | None) -> list[str]:
-        params: dict[str, object] = {"model_type": "z_image"}
-        if checkpoint_path is not None:
-            params[CUSTOM_FINETUNE_CHECKPOINT_KEY] = checkpoint_path
-        return bridge._run_manifest(
-            manifest=[{"id": 1, "params": params}],
-            media_suffixes={".png"},
-            on_progress=lambda *_args: None,
-            is_cancelled=lambda: False,
-        )
-
-    assert run(str(checkpoint)) == ["E:/tmp/out.png"]
-    assert run(str(checkpoint)) == ["E:/tmp/out.png"]
-    assert close_calls == 0
-    assert run(None) == ["E:/tmp/out.png"]
-    assert submissions == [
-        [str(checkpoint.resolve())],
-        [str(checkpoint.resolve())],
-        ["base.safetensors"],
-    ]
-    assert close_calls == 1
-    assert model_definition["URLs"] == ["base.safetensors"]
-
-
-def test_custom_finetune_rejects_missing_checkpoint(tmp_path: Path) -> None:
-    bridge = _make_bridge()
-    bridge._output_dir = tmp_path / "outputs"
-    bridge._config_dir = tmp_path / "config"
-    bridge._get_session = lambda: SimpleNamespace()  # type: ignore[method-assign]
-
-    with pytest.raises(RuntimeError, match="CUSTOM_FINETUNE_FILE_NOT_FOUND"):
+    with pytest.raises(RuntimeError, match="CUSTOM_FINETUNE_UNSUPPORTED"):
         bridge._run_manifest(
             manifest=[
                 {
                     "id": 1,
                     "params": {
                         "model_type": "z_image",
-                        CUSTOM_FINETUNE_CHECKPOINT_KEY: str(tmp_path / "missing.safetensors"),
+                        CUSTOM_FINETUNE_CHECKPOINT_KEY: str(tmp_path / "checkpoint.safetensors"),
                     },
                 }
             ],
+            media_suffixes={".png"},
+            on_progress=lambda *_args: None,
+            is_cancelled=lambda: False,
+        )
+
+
+def test_removed_aivs_model_type_is_rejected_before_session_start() -> None:
+    bridge = _make_bridge()
+
+    with pytest.raises(RuntimeError, match="UNSUPPORTED_WANGP_MODEL_TYPE"):
+        bridge._run_manifest(
+            manifest=[{"id": 1, "params": {"model_type": "aivs_ltx2_25_22B"}}],
             media_suffixes={".png"},
             on_progress=lambda *_args: None,
             is_cancelled=lambda: False,
@@ -572,32 +456,8 @@ def test_ltx2_video_uses_full_video_length_as_sliding_window_size() -> None:
     assert captured["settings"]["sliding_window_size"] == 481
 
 
-@pytest.mark.parametrize(
-    ("model_type", "expected_preview_data"),
-    [
-        (
-            "ltx2_25_22B_distilled",
-            {"_preview": {"mode": "tae", "update_rate": "adaptive", "device": "auto", "max_edge": 512, "preview_fps": 16, "webp_quality": 72}},
-        ),
-        (
-            "aivs_ltx2_25_22B_distilled",
-            {"_preview": {"mode": "tae", "update_rate": "adaptive", "device": "auto", "max_edge": 512, "preview_fps": 16, "webp_quality": 72}},
-        ),
-        (
-            "minimax_h3_ref2va_pruned",
-            {"_preview": {"mode": "tae", "update_rate": "adaptive", "device": "auto", "max_edge": 512, "preview_fps": 16, "webp_quality": 72}},
-        ),
-        (
-            "aivs_minimax_h3_ref2va_hybrid_20b",
-            {"_preview": {"mode": "tae", "update_rate": "adaptive", "device": "auto", "max_edge": 512, "preview_fps": 16, "webp_quality": 72}},
-        ),
-        ("wan2_2_t2v", {}),
-    ],
-)
-def test_video_manifest_requests_tae_previews_only_for_supported_models(
-    model_type: str,
-    expected_preview_data: dict[str, object],
-) -> None:
+@pytest.mark.parametrize("model_type", ["ltx2_25_22B_distilled", "minimax_h3_ref2va_pruned", "wan2_2_t2v"])
+def test_video_manifest_does_not_send_fork_preview_options(model_type: str) -> None:
     bridge = _make_bridge()
     captured: dict[str, object] = {}
 
@@ -613,14 +473,14 @@ def test_video_manifest_requests_tae_previews_only_for_supported_models(
         on_progress=lambda *_args: None, is_cancelled=lambda: False,
     )
 
-    assert captured["manifest"][0]["plugin_data"] == expected_preview_data
+    assert captured["manifest"][0]["plugin_data"] == {}
 
 
-def test_video_manifest_uses_configured_preview_options() -> None:
+def test_video_manifest_keeps_preview_options_out_of_the_manifest() -> None:
     bridge = _make_bridge()
     captured: dict[str, object] = {}
     bridge.set_preview_options(
-        mode="rgb",
+        mode="off",
         update_rate="every_2",
         device="cpu",
         max_edge=768,
@@ -640,42 +500,117 @@ def test_video_manifest_uses_configured_preview_options() -> None:
         on_progress=lambda *_args: None, is_cancelled=lambda: False,
     )
 
-    assert captured["manifest"][0]["plugin_data"] == {
-        "_preview": {
-            "mode": "rgb",
-            "update_rate": "every_2",
-            "device": "cpu",
-            "max_edge": 768,
-            "preview_fps": 8,
-            "webp_quality": 85,
-        }
-    }
+    assert captured["manifest"][0]["plugin_data"] == {}
 
 
-def test_preview_event_preserves_animated_webp_media(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", ["tae", "off"])
+def test_image_manifest_keeps_preview_options_out_of_the_manifest(mode: str) -> None:
     bridge = _make_bridge()
-    bridge._output_dir = tmp_path
-    captured: list[tuple[object, ...]] = []
-
-    bridge._handle_event(
-        SimpleNamespace(
-            kind="preview",
-            data=SimpleNamespace(
-                phase="inference", status="Preview", progress=50,
-                current_step=10, total_steps=20, image=None,
-                media=SimpleNamespace(mime_type="image/webp", data=b"animated-webp"),
-            ),
-        ),
-        lambda *args: captured.append(args),
-        deque(),
-        {"phase": "", "progress": -1, "logged_at": 0.0},
+    captured: dict[str, object] = {}
+    bridge.set_preview_options(
+        mode=mode,
+        update_rate="adaptive",
+        device="auto",
+        max_edge=512,
+        preview_fps=16,
+        webp_quality=72,
     )
 
-    assert (tmp_path / "_wangp_preview_latest.webp").read_bytes() == b"animated-webp"
-    assert captured[-1][9].startswith("file://")
+    def fake_run_manifest(*, manifest, media_suffixes, on_progress, is_cancelled):  # type: ignore[no-untyped-def]
+        captured["manifest"] = manifest
+        return ["E:/tmp/out.png"]
+
+    bridge._run_manifest = fake_run_manifest  # type: ignore[method-assign]
+    bridge.generate_images(
+        prompt="test", width=512, height=512, num_steps=4, num_images=1, seed=None,
+        on_progress=lambda *_args: None, is_cancelled=lambda: False,
+    )
+
+    assert captured["manifest"][0]["plugin_data"] == {}
 
 
-def test_preview_event_preserves_mp4_media(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [("tae", "tiny_vae_video"), ("tiny_vae_frames", "tiny_vae_frames"), ("tiny_vae_video", "tiny_vae_video"), ("rgb", "rgb"), ("off", "rgb")],
+)
+def test_run_manifest_applies_changed_preview_mode_on_first_load(
+    tmp_path: Path, mode: str, expected: str,
+) -> None:
+    bridge = _make_bridge()
+    bridge._output_dir = tmp_path / "outputs"
+    bridge._config_dir = tmp_path / "config"
+    bridge.set_preview_options(mode=mode, update_rate="adaptive", device="auto", max_edge=512, preview_fps=16, webp_quality=72)
+    server_config: dict[str, object] = {}
+    closes: list[None] = []
+    session = SimpleNamespace(
+        _state={"gen": {}},
+        _ensure_runtime=lambda: SimpleNamespace(module=SimpleNamespace(server_config=server_config)),
+        submit_manifest=lambda _manifest: object(),
+        close=lambda: closes.append(None),
+    )
+    bridge._get_session = lambda: session  # type: ignore[method-assign]
+    bridge._wait_for_job = lambda **_kwargs: ["E:/tmp/out.png"]  # type: ignore[method-assign]
+
+    bridge._run_manifest(
+        manifest=[{"id": 1, "params": {"model_type": "z_image"}, "plugin_data": {}}],
+        media_suffixes={".png"}, on_progress=lambda *_args: None, is_cancelled=lambda: False,
+    )
+
+    assert server_config["generation_preview"] == expected
+    assert closes == [None]
+
+
+def test_run_manifest_closes_cached_session_before_preview_mode_change(tmp_path: Path) -> None:
+    bridge = _make_bridge()
+    bridge._output_dir = tmp_path / "outputs"
+    bridge._config_dir = tmp_path / "config"
+    bridge._submitted_manifest_once = True
+    bridge.set_preview_options(mode="tiny_vae_frames", update_rate="adaptive", device="auto", max_edge=512, preview_fps=16, webp_quality=72)
+    server_config: dict[str, object] = {"generation_preview": "rgb"}
+    closes: list[None] = []
+    session = SimpleNamespace(
+        _state={"gen": {}},
+        _ensure_runtime=lambda: SimpleNamespace(module=SimpleNamespace(server_config=server_config)),
+        submit_manifest=lambda _manifest: object(),
+        close=lambda: closes.append(None),
+    )
+    bridge._get_session = lambda: session  # type: ignore[method-assign]
+    bridge._wait_for_job = lambda **_kwargs: ["E:/tmp/out.png"]  # type: ignore[method-assign]
+
+    bridge._run_manifest(
+        manifest=[{"id": 1, "params": {"model_type": "z_image"}, "plugin_data": {}}],
+        media_suffixes={".png"}, on_progress=lambda *_args: None, is_cancelled=lambda: False,
+    )
+
+    assert closes == [None]
+    assert server_config["generation_preview"] == "tiny_vae_frames"
+
+
+def test_run_manifest_keeps_cached_session_for_the_same_preview_mode(tmp_path: Path) -> None:
+    bridge = _make_bridge()
+    bridge._output_dir = tmp_path / "outputs"
+    bridge._config_dir = tmp_path / "config"
+    bridge._submitted_manifest_once = True
+    server_config: dict[str, object] = {"generation_preview": "tiny_vae_video"}
+    closes: list[None] = []
+    session = SimpleNamespace(
+        _state={"gen": {}},
+        _ensure_runtime=lambda: SimpleNamespace(module=SimpleNamespace(server_config=server_config)),
+        submit_manifest=lambda _manifest: object(),
+        close=lambda: closes.append(None),
+    )
+    bridge._get_session = lambda: session  # type: ignore[method-assign]
+    bridge._wait_for_job = lambda **_kwargs: ["E:/tmp/out.png"]  # type: ignore[method-assign]
+
+    bridge._run_manifest(
+        manifest=[{"id": 1, "params": {"model_type": "z_image"}, "plugin_data": {}}],
+        media_suffixes={".png"}, on_progress=lambda *_args: None, is_cancelled=lambda: False,
+    )
+
+    assert closes == []
+
+
+def test_preview_event_writes_native_mp4_video(tmp_path: Path) -> None:
     bridge = _make_bridge()
     bridge._output_dir = tmp_path
     captured: list[tuple[object, ...]] = []
@@ -686,7 +621,7 @@ def test_preview_event_preserves_mp4_media(tmp_path: Path) -> None:
             data=SimpleNamespace(
                 phase="inference", status="Preview", progress=50,
                 current_step=10, total_steps=20, image=None,
-                media=SimpleNamespace(mime_type="video/mp4", data=b"preview-mp4"),
+                video=b"preview-mp4",
             ),
         ),
         lambda *args: captured.append(args),
@@ -698,7 +633,34 @@ def test_preview_event_preserves_mp4_media(tmp_path: Path) -> None:
     assert ".mp4?v=" in captured[-1][9]
 
 
-def test_preview_event_falls_back_to_legacy_image_when_media_is_unavailable(tmp_path: Path) -> None:
+def test_preview_event_does_not_replace_a_throttled_native_video(tmp_path: Path) -> None:
+    class LegacyPreview:
+        def save(self, path: Path, **_kwargs: object) -> None:
+            path.write_bytes(b"jpeg-preview")
+
+    bridge = _make_bridge()
+    bridge._output_dir = tmp_path
+    bridge._last_preview_write_at = time.monotonic()
+    captured: list[tuple[object, ...]] = []
+
+    bridge._handle_event(
+        SimpleNamespace(
+            kind="preview",
+            data=SimpleNamespace(
+                phase="inference", status="Preview", progress=50,
+                current_step=10, total_steps=20, image=LegacyPreview(), video=b"preview-mp4",
+            ),
+        ),
+        lambda *args: captured.append(args),
+        deque(),
+        {"phase": "", "progress": -1, "logged_at": 0.0},
+    )
+
+    assert not (tmp_path / "_wangp_preview_latest.jpg").exists()
+    assert captured[-1][9] is None
+
+
+def test_preview_event_falls_back_to_pil_image_without_native_video(tmp_path: Path) -> None:
     class LegacyPreview:
         def save(self, path: Path, **_kwargs: object) -> None:
             path.write_bytes(b"jpeg-preview")
@@ -713,7 +675,7 @@ def test_preview_event_falls_back_to_legacy_image_when_media_is_unavailable(tmp_
             data=SimpleNamespace(
                 phase="inference", status="Preview", progress=50,
                 current_step=10, total_steps=20, image=LegacyPreview(),
-                media=SimpleNamespace(mime_type="application/octet-stream", data=b"ignored"),
+                video=None,
             ),
         ),
         lambda *args: captured.append(args),
@@ -813,29 +775,51 @@ def test_generate_video_forwards_default_lora_settings() -> None:
     assert captured["settings"]["loras_multipliers"] == "1.0"
 
 
-def test_ensure_style_lora_downloads_through_runtime_module() -> None:
+def test_ensure_style_lora_downloads_through_runtime_module(tmp_path: Path) -> None:
     bridge = _make_bridge()
+    bridge._root = tmp_path
     calls: list[tuple[str, str, int, dict[str, list[str]]]] = []
-    progress_events: list[tuple[object, ...]] = []
+    progress_events: list[tuple[tuple[object, ...], int]] = []
+    cancellation_requested = threading.Event()
+    native_abort_observed = threading.Event()
+    worker_thread_id: int | None = None
+    caller_thread_id = threading.get_ident()
 
     class RuntimeModule:
-        def download_models(self, filename, model_type, *, file_type, model_def):  # type: ignore[no-untyped-def]
+        def download_models(self, filename, model_type, *, file_type, model_def, gen):  # type: ignore[no-untyped-def]
+            nonlocal worker_thread_id
+            worker_thread_id = threading.get_ident()
             calls.append((filename, model_type, file_type, model_def))
+            progress = gen["download_progress_callback"]
+            abort = gen["abort_callback"]
+            assert callable(progress)
+            assert callable(abort)
+            progress({"filename": "style.safetensors", "completed": 5, "total": 10})
+            deadline = time.monotonic() + 2
+            while not abort():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            native_abort_observed.set()
 
     class Session:
         def _ensure_runtime(self):  # type: ignore[no-untyped-def]
             return type("Runtime", (), {"module": RuntimeModule()})()
 
     bridge._get_session = lambda: Session()  # type: ignore[method-assign]
-    bridge.ensure_style_lora(
-        source_url="https://example.test/style.safetensors",
-        model_type="ltx2_25_22B",
-        on_progress=lambda *args: progress_events.append(args),
-        is_cancelled=lambda: False,
-    )
+    def on_progress(*args: object) -> None:
+        progress_events.append((args, threading.get_ident()))
+        if args[0] == "downloading_model" and args[8] == "Downloading model":
+            cancellation_requested.set()
 
-    assert progress_events == [
-        (
+    with pytest.raises(RuntimeError, match="Generation was cancelled"):
+        bridge.ensure_style_lora(
+            source_url="https://example.test/style.safetensors",
+            model_type="ltx2_25_22B",
+            on_progress=on_progress,
+            is_cancelled=cancellation_requested.is_set,
+        )
+
+    assert progress_events[0][0] == (
             "downloading_model",
             3,
             None,
@@ -846,65 +830,79 @@ def test_ensure_style_lora_downloads_through_runtime_module() -> None:
             None,
             "Downloading selected style",
         )
-    ]
+    assert progress_events[1][0][0] == "downloading_model"
+    assert progress_events[1][0][8] == "Downloading model"
+    assert [thread_id for _, thread_id in progress_events] == [caller_thread_id, caller_thread_id]
+    assert worker_thread_id is not None and worker_thread_id != caller_thread_id
+    assert native_abort_observed.is_set()
     assert calls == [
         ("", "ltx2_25_22B", 1, {"loras": ["https://example.test/style.safetensors"]})
     ]
 
 
-def test_resolve_profiles_returns_an_isolated_wangp_result() -> None:
+def test_resolve_profiles_forwards_to_the_shared_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bridge = _make_bridge()
-    source = {"num_inference_steps": 8, "nested": {"value": 1}}
+    session = object()
+    source = {"num_inference_steps": 8}
 
-    class Session:
-        def resolve_profiles(self, model_type, **kwargs):  # type: ignore[no-untyped-def]
-            assert model_type == "ltx2_25_22B"
-            assert kwargs == {
-                "accelerator_profile_id": "ltx2_25_two_stage_distilled_8_3",
-                "preset_profile_id": None,
-            }
-            return source
+    def resolve(session_arg: object, model_type: str, **kwargs: object) -> dict[str, object]:
+        assert session_arg is session
+        assert model_type == "ltx2_25_22B"
+        assert kwargs == {
+            "accelerator_profile_id": "ltx2_25_two_stage_distilled_8_3",
+            "preset_profile_id": None,
+        }
+        return source
 
-    bridge._get_session = lambda: Session()  # type: ignore[method-assign]
+    monkeypatch.setattr("services.wangp_bridge.resolve_profiles", resolve)
+    bridge._get_session = lambda: session  # type: ignore[method-assign]
     settings = bridge.resolve_profiles(
         "ltx2_25_22B",
         accelerator_profile_id="ltx2_25_two_stage_distilled_8_3",
     )
-    cast(dict[str, int], settings["nested"])["value"] = 2
 
-    assert settings["num_inference_steps"] == 8
-    assert source == {"num_inference_steps": 8, "nested": {"value": 1}}
+    assert settings is source
 
 
-def test_resolve_profiles_loads_isolated_model_defaults_without_profiles() -> None:
+def test_resolve_profiles_forwards_default_request_to_the_shared_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bridge = _make_bridge()
-    source = {"num_inference_steps": 20, "nested": {"value": 1}}
+    session = object()
+    source = {"num_inference_steps": 20}
 
-    class Session:
-        def get_default_settings(self, model_type: str) -> dict[str, object]:
-            assert model_type == "minimax_h3_fl2va_pruned"
-            return source
+    def resolve(session_arg: object, model_type: str, **kwargs: object) -> dict[str, object]:
+        assert session_arg is session
+        assert model_type == "minimax_h3_fl2va_pruned"
+        assert kwargs == {"accelerator_profile_id": None, "preset_profile_id": None}
+        return source
 
-    bridge._get_session = lambda: Session()  # type: ignore[method-assign]
+    monkeypatch.setattr("services.wangp_bridge.resolve_profiles", resolve)
+    bridge._get_session = lambda: session  # type: ignore[method-assign]
     settings = bridge.resolve_profiles("minimax_h3_fl2va_pruned")
-    cast(dict[str, int], settings["nested"])["value"] = 2
 
-    assert settings["num_inference_steps"] == 20
-    assert source == {"num_inference_steps": 20, "nested": {"value": 1}}
+    assert settings is source
 
 
-def test_resolve_profiles_requires_a_supported_wangp_api() -> None:
+def test_resolve_profiles_propagates_the_shared_resolver_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bridge = _make_bridge()
-    bridge._get_session = lambda: object()  # type: ignore[method-assign]
+    session = object()
 
-    with pytest.raises(RuntimeError, match="does not support resolve_profiles"):
+    def resolve(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise RuntimeError("WanGP runtime does not expose native profile composition APIs.")
+
+    monkeypatch.setattr("services.wangp_bridge.resolve_profiles", resolve)
+    bridge._get_session = lambda: session  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="does not expose native profile composition APIs"):
         bridge.resolve_profiles(
             "ltx2_25_22B",
             accelerator_profile_id="ltx2_25_two_stage_distilled_8_3",
         )
-
-    with pytest.raises(RuntimeError, match="does not support get_default_settings"):
-        bridge.resolve_profiles("minimax_h3_fl2va_pruned")
 
 
 def test_generate_video_maps_ic_lora_guide_only() -> None:
@@ -1059,17 +1057,8 @@ def test_generate_director_video_submits_exact_backend_settings() -> None:
     assert captured["manifest"] == [
         {
             "id": 1,
-            "params": {**settings, "config": "PrunaAI VAE"},
-            "plugin_data": {
-                "_preview": {
-                    "mode": "tae",
-                    "update_rate": "adaptive",
-                    "device": "auto",
-                    "max_edge": 512,
-                    "preview_fps": 16,
-                    "webp_quality": 72,
-                }
-            },
+            "params": {**settings, "config": ""},
+            "plugin_data": {},
         }
     ]
 

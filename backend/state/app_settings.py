@@ -88,7 +88,7 @@ class OutputSettings(SettingsBaseModel):
 
 
 class PreviewSettings(SettingsBaseModel):
-    mode: Literal["off", "rgb", "tae"] = "tae"
+    mode: Literal["off", "rgb", "tae", "tiny_vae_frames"] = "tae"
     update_rate: Literal["adaptive", "every_step", "every_2", "every_4"] = "adaptive"
     device: Literal["auto", "cuda", "cpu"] = "auto"
     max_edge: int = 512

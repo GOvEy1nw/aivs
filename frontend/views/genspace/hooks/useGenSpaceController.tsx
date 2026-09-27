@@ -1124,6 +1124,9 @@ export function useGenSpaceController(isActive: boolean) {
   const queueGeneration = useMemo<GenSpaceGalleryProps["generation"]>(() => {
     const progress = activeQueueJob?.progress;
     const statusDetails = getQueueProgressBadges(progress);
+    const modelLifecycleActive =
+      progress?.phase === "checking_model_files" ||
+      progress?.phase === "loading_model";
     return {
       mode: activeQueueJob?.summary.mediaKind === "audio"
         ? "music"
@@ -1132,8 +1135,8 @@ export function useGenSpaceController(isActive: boolean) {
       isSelected: selectedQueueJobId === activeQueueJob?.id,
       isCancelling: activeQueueJob?.status === "cancel_requested",
       previewUrl: progress?.previewUrl ?? null,
-      modelDownload: null,
-      modelLifecycleActive: false,
+      modelDownload: progress?.modelDownload ?? null,
+      modelLifecycleActive,
       statusMessage: progress?.statusDetail ?? progress?.phase ?? activeQueueJob?.status ?? "",
       progress: progress?.percent ?? 0,
       badges: [...(activeQueueJob?.summary.badges ?? []), ...statusDetails],

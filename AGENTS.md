@@ -113,7 +113,7 @@ React renderer (`frontend/`)
 | `electron/` | Desktop lifecycle, preload, IPC, path safety, storage, runtime setup, export, and packaging behaviour |
 | `backend/` | FastAPI routes, typed handlers, state, services, curated profiles, WanGP bridge, and backend tests |
 | `scripts/` | Supported setup, build, packaging, runtime-stack, and WanGP update workflows |
-| external `Wan2GP/` checkout | Development WanGP source supplied through `WANGP_ROOT` or `WANGP_WGP_PATH`; installed Windows builds clone the configured branch into app-managed runtime storage |
+| external `Wan2GP/` source | Development executes `C:\Wan2GP` directly (overridable through `WANGP_ROOT` or `WANGP_WGP_PATH`). Releases bundle this independent source and copy it into writable user-data storage for execution; Git is not required for source selection. |
 | `resources/` | Application and installer resources |
 | `backlog/tasks/` | Actionable task scope, acceptance criteria, plans, status, and validation evidence |
 
@@ -281,7 +281,8 @@ Treat Python, Torch, CUDA, acceleration kernels, and WanGP as one curated compat
 - Use the versions and install paths pinned by `backend/pyproject.toml`, `backend/uv.lock`, `scripts/wangp-stacks.json`, and the repository scripts.
 - Do not run broad `pip install -U`, generic `uv update`, or automated dependency upgrades across the GPU stack.
 - Do not let a normal package update prune hardware-specific wheels from the shared backend environment.
-- Development uses an external read-only WanGP checkout via `WANGP_ROOT` or `WANGP_WGP_PATH`; installed Windows setup transactionally clones the configured branch into app-managed storage.
+- Development executes the independent `C:\Wan2GP` source directly. Release builds bundle its runtime files; installed builds copy that bundle into a writable folder identified by source content, without fetching or updating source at runtime.
+- Use native WanGP model definitions. Do not inject AiVS finetunes or synthesize custom checkpoint definitions.
 
 ## 9. Persistence and file safety
 
@@ -365,14 +366,14 @@ Run commands from the repository root unless shown otherwise.
 | `pnpm dev` | Launch Vite, Electron, and the supervised local backend |
 | `pnpm dev:debug` | Launch with Electron inspector and Python debug support |
 
-Development requires an external WanGP checkout during setup:
+Development executes `C:\Wan2GP` directly. `setup:dev:win` validates it and prepares the backend environment; it does not require Git history or clone source.
 
 ```powershell
 $env:WANGP_ROOT = "D:\Wan2GP"
 pnpm setup:dev:win
 ```
 
-The setup scripts validate this checkout but never fetch, switch, or modify it.
+The setup scripts never fetch, switch, or patch this checkout. WanGP itself may write its normal runtime files when executed.
 
 ### Focused checks
 
@@ -417,7 +418,7 @@ Use the repository build scripts. Do not replace them with ad hoc `vite`, raw `e
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm wangp:check` | Compare the external checkout with the configured AiVS branch head without modifying it |
+| `pnpm wangp:check` | Inspect the external WanGP development source without modifying it |
 | `pnpm wangp:validate` | Run focused compatibility validation against the external checkout without modifying it |
 | `pnpm wangp:validate:full` | Run the full external-checkout validation gate without modifying it |
 

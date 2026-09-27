@@ -5,6 +5,7 @@ import { useProjects } from './ProjectContext'
 import { useReferenceLibrary } from './ReferenceLibraryContext'
 import { DEFAULT_COLOR_CORRECTION, type Asset, type TimelineClip } from '../types/project'
 import type { GenerationSettings } from '../types/generation'
+import type { DownloadUnit, ModelDownloadProgress } from '../types/progress'
 import type {
   ImageSubmissionSnapshot,
   MusicSubmissionSnapshot,
@@ -53,6 +54,8 @@ export interface GenerationQueueJob {
     phaseCount?: number | null
     sectionIndex?: number | null
     sectionCount?: number | null
+    progressUnit?: DownloadUnit | null
+    modelDownload?: ModelDownloadProgress | null
   }
   error?: string | null
   clientContext?: QueueClientContext

@@ -17,6 +17,7 @@ dependencies = [
     "torch==2.10.0",
     "torchvision==0.25.0",
     "torchaudio==2.10.0",
+    "mmgp==3.8.2",
     "huggingface-hub>=0.23.0",
     "tqdm>=4.66.0",
     "pynvml>=11.5.0; sys_platform != 'darwin'",

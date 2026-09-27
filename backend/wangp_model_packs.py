@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import argparse
-from copy import deepcopy
 from dataclasses import replace
 from importlib import import_module
 import json
-import math
 import os
 import sys
+import threading
 import warnings
-from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, TypeAlias, cast
+
+from services.wangp_downloads import download_context, download_progress
+from services.wangp_profiles import resolve_profiles
 
 
 CURATED_VIDEO_PACK_IDS = frozenset(
@@ -50,24 +51,24 @@ PACKS: dict[str, dict[str, PackValue]] = {
     },
     "hidream_o1": {"name": "HiDream O1", "kind": "model", "model_type": "hidream_o1_dev"},
     "ideogram4_int8": {
-        "name": "Ideogram 4 Standard",
+        "name": "Ideogram 4",
         "kind": "model",
-        "model_type": "aivs_ideogram4_int8",
+        "model_type": "ideogram4",
     },
     "ideogram4_turbotime_int8": {
         "name": "Ideogram 4 TurboTime",
         "kind": "model",
-        "model_type": "aivs_ideogram4_turbotime_int8",
+        "model_type": "ideogram4_turbotime",
     },
     "ltx2_fast": {
         "name": "LTX 2.5 Fast",
         "kind": "model",
-        "model_type": "aivs_ltx2_25_22B_distilled",
+        "model_type": "ltx2_25_22B_distilled",
     },
     "ltx2_quality": {
         "name": "LTX 2.5 Quality",
         "kind": "model",
-        "model_type": "aivs_ltx2_25_22B",
+        "model_type": "ltx2_25_22B",
         "accelerator_profile_id": "ltx2_25_two_stage_hq_res2s_15_3",
     },
     "ace_step_15_turbo": {"name": "ACE-Step 1.5 Fast", "kind": "model", "model_type": "ace_step_v1_5_turbo_lm_1_7b"},
@@ -79,16 +80,16 @@ PACKS: dict[str, dict[str, PackValue]] = {
     "minimax-h3-fast": {
         "name": "MiniMax H3 Fast",
         "kind": "model",
-        "model_types": ["aivs_minimax_h3_fl2va_hybrid_20b", "aivs_minimax_h3_ref2va_hybrid_20b"],
+        "model_types": ["minimax_h3_fl2va_pruned", "minimax_h3_ref2va_pruned"],
         "accelerator_profile_ids": {
-            "aivs_minimax_h3_fl2va_hybrid_20b": "aivs_h3_turbo_lightx2v_fl2v_4_steps_v0.1",
-            "aivs_minimax_h3_ref2va_hybrid_20b": "aivs_h3_turbo_lightx2v_fl2v_4_steps_v0.1",
+            "minimax_h3_fl2va_pruned": "aivs_h3_turbo_lightx2v_fl2v_4_steps_v0.1",
+            "minimax_h3_ref2va_pruned": "aivs_h3_turbo_lightx2v_ref2v_4_steps_v0.1",
         },
     },
     "minimax-h3-quality": {
         "name": "MiniMax H3 Quality",
         "kind": "model",
-        "model_types": ["aivs_minimax_h3_fl2va_hybrid_20b", "aivs_minimax_h3_ref2va_hybrid_20b"],
+        "model_types": ["minimax_h3_fl2va_pruned", "minimax_h3_ref2va_pruned"],
     },
     "prompt_enhancer": {"name": "Prompt Enhancer", "kind": "prompt"},
 }
@@ -186,41 +187,22 @@ def _delete_pack_files(
     del manifests[pack_id]
 
 
-def _non_negative_number(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, Real):
-        return None
-    number = float(value)
-    return number if math.isfinite(number) and number >= 0 else None
-
-
-def _safe_text(value: object) -> str | None:
-    return value.strip() if isinstance(value, str) and value.strip() else None
-
-
 def _transfer_event(update: object) -> dict[str, object] | None:
-    unit = getattr(update, "unit", None)
-    if unit not in {"bytes", "files"}:
+    progress = download_progress(update)
+    if progress is None:
         return None
-    current = _non_negative_number(getattr(update, "current", None))
-    if current is None:
-        return None
-    total = _non_negative_number(getattr(update, "total", None))
-    if total is not None and total <= 0:
-        total = None
-    file_index = _non_negative_number(getattr(update, "file_index", None))
-    file_count = _non_negative_number(getattr(update, "file_count", None))
     return {
-        "phase": _safe_text(getattr(update, "phase", None)),
-        "source": _safe_text(getattr(update, "source", None)),
-        "repoId": _safe_text(getattr(update, "repo_id", None)),
-        "filename": _safe_text(getattr(update, "filename", None)),
-        "unit": unit,
-        "current": int(current),
-        "total": int(total) if total is not None else None,
-        "speedBps": _non_negative_number(getattr(update, "speed_bps", None)),
-        "etaSeconds": _non_negative_number(getattr(update, "eta_seconds", None)),
-        "fileIndex": int(file_index) if file_index is not None else None,
-        "fileCount": int(file_count) if file_count is not None else None,
+        "phase": progress.phase,
+        "source": progress.source,
+        "repoId": progress.repo_id,
+        "filename": progress.filename,
+        "unit": progress.unit,
+        "current": progress.current,
+        "total": progress.total,
+        "speedBps": progress.speed_bps,
+        "etaSeconds": progress.eta_seconds,
+        "fileIndex": progress.file_index,
+        "fileCount": progress.file_count,
     }
 
 
@@ -269,7 +251,7 @@ def _create_model_manager(wgp: Any) -> Any:
 def _download_model_dependencies(
     wgp: Any,
     model_type: str,
-    progress_callback: Callable[[object], None] | None = None,
+    gen: dict[str, object] | None = None,
     model_def: dict[str, Any] | None = None,
 ) -> None:
     """Mirror WanGP load_models download preflight without loading model weights."""
@@ -286,7 +268,7 @@ def _download_model_dependencies(
             model_type,
             file_type=0,
             submodel_no=1,
-            progress_callback=progress_callback,
+            gen=gen,
             model_def=model_def,
         )
         downloaded_main = True
@@ -305,7 +287,7 @@ def _download_model_dependencies(
                 model_type,
                 file_type=0,
                 submodel_no=2,
-                progress_callback=progress_callback,
+                gen=gen,
                 model_def=model_def,
             )
             downloaded_main = True
@@ -348,7 +330,7 @@ def _download_model_dependencies(
                         model_type,
                         file_type=1,
                         submodel_no=submodel_no,
-                        progress_callback=progress_callback,
+                        gen=gen,
                         model_def=model_def,
                     )
         else:
@@ -365,7 +347,7 @@ def _download_model_dependencies(
                     model_type,
                     file_type=1,
                     submodel_no=0,
-                    progress_callback=progress_callback,
+                    gen=gen,
                     model_def=model_def,
                 )
 
@@ -375,7 +357,7 @@ def _download_model_dependencies(
             model_type,
             file_type=0,
             submodel_no=-1,
-            progress_callback=progress_callback,
+            gen=gen,
             model_def=model_def,
         )
 
@@ -400,7 +382,7 @@ def _download_model_dependencies(
                 file_type=2,
                 submodel_no=-1,
                 force_path=model_def.get("text_encoder_folder"),
-                progress_callback=progress_callback,
+                gen=gen,
                 model_def=model_def,
             )
 
@@ -509,34 +491,12 @@ def _resolve_pack_profile_settings(
         else pack.get("accelerator_profile_id")
     )
     preset_profile_id = pack.get("preset_profile_id")
-    has_profiles = (
-        accelerator_profile_id is not None or preset_profile_id is not None
+    return resolve_profiles(
+        session,
+        model_type,
+        accelerator_profile_id=cast(str | None, accelerator_profile_id),
+        preset_profile_id=cast(str | None, preset_profile_id),
     )
-    resolver_name = "resolve_profiles" if has_profiles else "get_default_settings"
-    resolver = getattr(session, resolver_name, None)
-    if not callable(resolver):
-        raise RuntimeError(
-            f"WanGP runtime does not support {resolver_name}; update Wan2GP."
-        )
-    try:
-        settings = (
-            resolver(
-                model_type,
-                accelerator_profile_id=accelerator_profile_id,
-                preset_profile_id=preset_profile_id,
-            )
-            if has_profiles
-            else resolver(model_type)
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            f"WanGP {resolver_name} failed for '{model_type}': {exc}"
-        ) from exc
-    if not isinstance(settings, dict):
-        raise RuntimeError(
-            f"WanGP {resolver_name} returned invalid settings for '{model_type}'."
-        )
-    return deepcopy(cast(dict[str, object], settings))
 
 
 def _effective_pack_model_def(
@@ -578,10 +538,10 @@ def _validate_paths(pack_id: str, paths: set[Path]) -> set[Path]:
 def _process_download_definitions(
     wgp: Any,
     definitions: dict[str, Any] | list[dict[str, Any]],
-    progress_callback: Callable[[object], None] | None,
+    gen: dict[str, object],
 ) -> None:
     for definition in definitions if isinstance(definitions, list) else [definitions]:
-        wgp.process_files_def(**definition, progress_callback=progress_callback)
+        wgp.process_files_def(**definition, gen=gen)
 
 
 def _download_pack(
@@ -590,28 +550,30 @@ def _download_pack(
     session: Any,
     pack_id: str,
     progress_callback: Callable[[object], None] | None = None,
+    is_cancelled: Callable[[], bool] = lambda: False,
 ) -> set[Path]:
+    gen = download_context(progress_callback or (lambda update: None), is_cancelled)
     pack = PACKS[pack_id]
     kind = pack["kind"]
     if kind == "utility":
         definition = wgp.query_core_shared_model_files()
-        _process_download_definitions(wgp, definition, progress_callback)
+        _process_download_definitions(wgp, definition, gen)
     elif kind == "prompt":
         assets = import_module("shared.prompt_enhancer.assets")
         definitions = cast(list[dict[str, Any]], assets.query_prompt_enhancer_download_defs())
-        _process_download_definitions(wgp, definitions, progress_callback)
+        _process_download_definitions(wgp, definitions, gen)
     elif kind == "audio_processor":
         processors = import_module("postprocessing.audio_processors")
         handler = processors.find_processor(pack["processor"])
         if handler is None:
             raise RuntimeError(f"WanGP audio processor is not registered: {pack['processor']}")
-        _process_download_definitions(wgp, handler.query_download_defs(), progress_callback)
+        _process_download_definitions(wgp, handler.query_download_defs(), gen)
     else:
         for model_type in _pack_model_types(pack):
             _download_model_dependencies(
                 wgp,
                 model_type,
-                progress_callback,
+                gen,
                 _effective_pack_model_def(wgp, session, pack_id, pack, model_type),
             )
     return _validate_paths(pack_id, _resolve_pack_paths(wgp, manager, session, pack_id))
@@ -682,24 +644,18 @@ def main() -> int:
 
     os.chdir(root)
     sys.path[:0] = [str(Path(__file__).resolve().parent), str(root)]
-    # WanGP parses sys.argv during import. Keep this runner's CLI flags out of
-    # that parser, otherwise it exits with argparse status 2 before a pack starts.
-    runner_argv = sys.argv
-    sys.argv = [sys.argv[0]]
-    try:
-        wgp = import_module("wgp")
-    finally:
-        sys.argv = runner_argv
-    files_locator = import_module("shared.utils.files_locator")
-    checkpoint_paths = [str(checkpoints_dir), "."]
-    files_locator.set_checkpoints_paths(checkpoint_paths)
-    wgp.server_config["checkpoints_paths"] = checkpoint_paths
-    manager = _create_model_manager(wgp)
     api = import_module("shared.api")
     profile_session = api.WanGPSession(
         root=root,
         config_path=app_data_dir / "wangp_bridge" / "wgp_config.json",
     )
+    # Let the native session load wgp with the same root/config as generation.
+    wgp = profile_session._ensure_runtime().module
+    files_locator = import_module("shared.utils.files_locator")
+    checkpoint_paths = [str(checkpoints_dir), "."]
+    files_locator.set_checkpoints_paths(checkpoint_paths)
+    wgp.server_config["checkpoints_paths"] = checkpoint_paths
+    manager = _create_model_manager(wgp)
 
     if args.list:
         installed_packs: list[dict[str, object]] = []
@@ -715,8 +671,19 @@ def main() -> int:
         _event("packs", packs=installed_packs)
         return 0
 
+    cancelled = threading.Event()
+
+    def read_cancellation() -> None:
+        for line in sys.stdin:
+            if line.strip() == "cancel":
+                cancelled.set()
+                return
+
+    threading.Thread(target=read_cancellation, daemon=True).start()
     pack_count = len(requested)
     for pack_index, pack_id in enumerate(requested, start=1):
+        if cancelled.is_set():
+            raise RuntimeError("Model-pack download was cancelled")
         pack_name = PACKS[pack_id]["name"]
         if not isinstance(pack_name, str):
             raise RuntimeError(f"Model pack '{pack_id}' has an invalid name")
@@ -733,7 +700,10 @@ def main() -> int:
             profile_session,
             pack_id,
             _pack_progress_callback(pack_id, pack_name, pack_index, pack_count),
+            cancelled.is_set,
         )
+        if cancelled.is_set():
+            raise RuntimeError("Model-pack download was cancelled")
         manifests[pack_id] = sorted(_manifest_path(root, path) for path in paths)
         _save_state(app_data_dir, manifests)
         _event("pack-complete", **context)

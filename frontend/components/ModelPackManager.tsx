@@ -8,7 +8,6 @@ import {
 } from "../lib/transfer-format";
 import { Button } from "./ui/button";
 import { useModelProfiles } from "@/contexts/ModelProfilesContext";
-import { useAppSettings } from "@/contexts/AppSettingsContext";
 
 interface ModelPack {
   id: string;
@@ -58,8 +57,7 @@ export function ModelPackManager({
   firstRun = false,
   onContinue,
 }: ModelPackManagerProps) {
-  const { all: modelProfiles, refreshAfterModelPackMutation } = useModelProfiles();
-  const { settings, saveSettings } = useAppSettings();
+  const { refreshAfterModelPackMutation } = useModelProfiles();
   const [packs, setPacks] = useState<ModelPack[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [progress, setProgress] = useState<ModelPackProgress | null>(null);
@@ -265,46 +263,6 @@ export function ModelPackManager({
         featureFilters.some((feature) => pack.features?.includes(feature))),
   );
   const packGroups = groupModelPacks(filteredPacks);
-  const customFinetuneProfiles = modelProfiles.filter(
-    (profile) =>
-      profile.visible &&
-      (profile.mediaType === "image" || profile.mediaType === "video") &&
-      profile.wangpModelType &&
-      !profile.wangpMetadata.finetune,
-  );
-
-  const selectCustomFinetune = async (profileId: string, profileName: string) => {
-    setError(null);
-    try {
-      const paths = await window.electronAPI.showOpenFileDialog({
-        title: `Select custom finetune for ${profileName}`,
-        filters: [{ name: "Model checkpoints", extensions: ["safetensors", "gguf"] }],
-        properties: ["openFile"],
-      });
-      const path = paths?.[0];
-      if (!path) return;
-      await saveSettings({
-        customFinetunes: { ...settings.customFinetunes, [profileId]: path },
-      });
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Custom finetune selection failed.",
-      );
-    }
-  };
-
-  const clearCustomFinetune = async (profileId: string) => {
-    setError(null);
-    const customFinetunes = { ...settings.customFinetunes };
-    delete customFinetunes[profileId];
-    try {
-      await saveSettings({ customFinetunes });
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Custom finetune removal failed.",
-      );
-    }
-  };
 
   return (
     <div className={firstRun ? "w-full max-w-3xl" : "space-y-4"}>
@@ -607,41 +565,6 @@ export function ModelPackManager({
       </div>
       {packGroups.length === 0 && (
         <p className="text-sm text-muted-foreground">No models match these filters.</p>
-      )}
-
-      {!firstRun && (
-        <section className="mt-6 border-t border-border pt-4" aria-labelledby="custom-finetunes-heading">
-        <h4 id="custom-finetunes-heading" className="text-sm font-medium text-foreground">
-          Custom Finetunes
-        </h4>
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          Advanced: select a local checkpoint you downloaded yourself. AiVS keeps the curated
-          workflow settings and uses the file only for this profile; compatibility is your responsibility.
-        </p>
-        <div className="mt-3 space-y-2">
-          {customFinetuneProfiles.map((profile) => {
-            const path = settings.customFinetunes[profile.id];
-            return (
-              <div key={profile.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-input px-3 py-2">
-                <div className="min-w-0">
-                  <p className="text-sm text-foreground">{profile.displayName}</p>
-                  {path && <p className="max-w-md truncate text-xs text-muted-foreground" title={path}>{path}</p>}
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <Button variant="outline" className="h-8 border-border-strong px-2.5 text-xs" onClick={() => void selectCustomFinetune(profile.id, profile.displayName)}>
-                    {path ? "Change file" : "Select file"}
-                  </Button>
-                  {path && (
-                    <Button variant="ghost" className="h-8 px-2.5 text-xs text-muted-foreground" onClick={() => void clearCustomFinetune(profile.id)}>
-                      Clear
-                    </Button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        </section>
       )}
 
       {progress?.status === "cancelled" && (

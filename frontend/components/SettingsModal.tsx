@@ -591,14 +591,14 @@ export function SettingsModal({
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Generation Previews</h3>
                   <p className="mt-1 text-xs leading-relaxed text-muted">
-                    Animated TAE is used where WanGP supports it; other models fall back to Fast RGB. Lower sizes and frame rates reduce preview overhead.
+                    Tiny VAE provides clearer previews where supported; other models use Fast RGB. Video previews show motion, while image generations keep still previews.
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   <label className="space-y-1.5">
                     <span className="text-xs text-muted">Mode</span>
                     <select
-                      value={advancedSettings.previewSettings.mode}
+                      value={advancedSettings.previewSettings.mode === "off" ? "rgb" : advancedSettings.previewSettings.mode}
                       disabled={advancedSaving}
                       onChange={(event) => {
                         setAdvancedSettings((current) => ({ ...current, previewSettings: { ...current.previewSettings, mode: event.target.value as typeof current.previewSettings.mode } }));
@@ -606,94 +606,10 @@ export function SettingsModal({
                       }}
                       className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground"
                     >
-                      <option value="tae">TAE (when supported)</option>
                       <option value="rgb">Fast RGB</option>
-                      <option value="off">Off</option>
+                      <option value="tiny_vae_frames">Tiny VAE frames</option>
+                      <option value="tae">Tiny VAE video</option>
                     </select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs text-muted">Update Rate</span>
-                    <select
-                      value={advancedSettings.previewSettings.updateRate}
-                      disabled={advancedSaving}
-                      onChange={(event) => {
-                        setAdvancedSettings((current) => ({ ...current, previewSettings: { ...current.previewSettings, updateRate: event.target.value as typeof current.previewSettings.updateRate } }));
-                        setAdvancedReloaded(false);
-                      }}
-                      className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground"
-                    >
-                      <option value="adaptive">Adaptive</option>
-                      <option value="every_step">Every step</option>
-                      <option value="every_2">Every 2 steps</option>
-                      <option value="every_4">Every 4 steps</option>
-                    </select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs text-muted">Decode Device</span>
-                    <select
-                      value={advancedSettings.previewSettings.device}
-                      disabled={advancedSaving}
-                      onChange={(event) => {
-                        setAdvancedSettings((current) => ({ ...current, previewSettings: { ...current.previewSettings, device: event.target.value as typeof current.previewSettings.device } }));
-                        setAdvancedReloaded(false);
-                      }}
-                      className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground"
-                    >
-                      <option value="auto">Auto</option>
-                      <option value="cuda">GPU</option>
-                      <option value="cpu">CPU</option>
-                    </select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs text-muted">Maximum Edge</span>
-                    <select
-                      value={advancedSettings.previewSettings.maxEdge}
-                      disabled={advancedSaving}
-                      onChange={(event) => {
-                        setAdvancedSettings((current) => ({ ...current, previewSettings: { ...current.previewSettings, maxEdge: Number(event.target.value) } }));
-                        setAdvancedReloaded(false);
-                      }}
-                      className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground"
-                    >
-                      {[128, 256, 384, 512, 768, 1024].map((size) => (
-                        <option key={size} value={size}>
-                          {size}px
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs text-muted">Playback FPS</span>
-                    <select
-                      value={advancedSettings.previewSettings.previewFps}
-                      disabled={advancedSaving}
-                      onChange={(event) => {
-                        setAdvancedSettings((current) => ({ ...current, previewSettings: { ...current.previewSettings, previewFps: Number(event.target.value) as typeof current.previewSettings.previewFps } }));
-                        setAdvancedReloaded(false);
-                      }}
-                      className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground"
-                    >
-                      {[2, 4, 8, 16].map((fps) => (
-                        <option key={fps} value={fps}>
-                          {fps} FPS
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs text-muted">WebP Quality</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={advancedSettings.previewSettings.webpQuality}
-                      disabled={advancedSaving}
-                      onChange={(event) => {
-                        setAdvancedSettings((current) => ({ ...current, previewSettings: { ...current.previewSettings, webpQuality: Math.max(1, Math.min(100, Number(event.target.value))) } }));
-                        setAdvancedReloaded(false);
-                      }}
-                      className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground"
-                    />
                   </label>
                 </div>
               </div>

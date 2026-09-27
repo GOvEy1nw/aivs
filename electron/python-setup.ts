@@ -134,8 +134,8 @@ const MODEL_PACKS: Omit<ModelPack, 'installed'>[] = [
   {
     id: 'ideogram4_int8',
     name: 'Ideogram 4 Standard',
-    estimatedSize: '~28.3 GB',
-    modelType: 'ideogram4_int8',
+    estimatedSize: '',
+    modelType: 'ideogram4',
     groupId: 'ideogram4',
     groupName: 'Ideogram 4',
     variantName: 'Standard',
@@ -145,8 +145,8 @@ const MODEL_PACKS: Omit<ModelPack, 'installed'>[] = [
   {
     id: 'ideogram4_turbotime_int8',
     name: 'Ideogram 4 TurboTime',
-    estimatedSize: '~19.6 GB',
-    modelType: 'ideogram4_turbotime_int8',
+    estimatedSize: '',
+    modelType: 'ideogram4_turbotime',
     groupId: 'ideogram4',
     groupName: 'Ideogram 4',
     variantName: 'TurboTime',
@@ -275,14 +275,61 @@ function isWanGPRoot(root: string): boolean {
     .every((relative) => fs.existsSync(path.join(root, relative)))
 }
 
-export function getWanGPRoot(): string {
-  if (!isDev) return path.join(app.getPath('userData'), 'runtime', 'Wan2GP')
-  for (const value of [process.env.WANGP_ROOT, process.env.WANGP_WGP_PATH]) {
-    if (!value?.trim()) continue
-    const root = path.resolve(value.endsWith('wgp.py') ? path.dirname(value) : value)
-    if (isWanGPRoot(root)) return root
+function getBundledWanGPHash(): string | null {
+  try {
+    const source = JSON.parse(fs.readFileSync(path.join(process.resourcesPath, 'Wan2GP', '.aivs-wangp-source.json'), 'utf-8')) as {
+      schemaVersion?: unknown
+      contentHash?: unknown
+    }
+    return source.schemaVersion === 1 && typeof source.contentHash === 'string' && /^[0-9a-f]{64}$/.test(source.contentHash)
+      ? source.contentHash
+      : null
+  } catch {
+    return null
   }
-  throw new Error('Set WANGP_ROOT or WANGP_WGP_PATH to a valid external Wan2GP checkout.')
+}
+
+function getWanGPSourceHash(root: string): string {
+  const files: string[] = []
+  const visit = (relative: string): void => {
+    for (const entry of fs.readdirSync(path.join(root, relative), { withFileTypes: true })) {
+      const file = relative ? `${relative}/${entry.name}` : entry.name
+      if (entry.isSymbolicLink()) throw new Error(`WanGP source contains a link: ${file}`)
+      if (entry.isDirectory()) visit(file)
+      else if (entry.isFile() && file !== '.aivs-wangp-source.json') files.push(file)
+    }
+  }
+  visit('')
+  const hash = crypto.createHash('sha256')
+  for (const file of files.sort()) {
+    hash.update(`${file}\n`)
+    hash.update(fs.readFileSync(path.join(root, file)))
+  }
+  return hash.digest('hex')
+}
+
+function isWanGPRuntimeReady(): boolean {
+  try {
+    const root = getWanGPRoot()
+    if (!isWanGPRoot(root)) return false
+    if (isDev) return true
+    const source = JSON.parse(fs.readFileSync(path.join(root, '.aivs-wangp-source.json'), 'utf-8')) as { contentHash?: unknown }
+    return source.contentHash === getBundledWanGPHash()
+  } catch {
+    return false
+  }
+}
+
+export function getWanGPRoot(): string {
+  if (isDev) {
+    const source = process.env.WANGP_ROOT?.trim() || process.env.WANGP_WGP_PATH?.trim()
+      || (process.platform === 'win32' ? 'C:\\Wan2GP' : path.resolve(process.cwd(), '..', 'Wan2GP'))
+    const root = path.resolve(source)
+    return path.basename(root).toLowerCase() === 'wgp.py' ? path.dirname(root) : root
+  }
+  const hash = getBundledWanGPHash()
+  if (!hash) throw new Error('Bundled WanGP source identity is missing or invalid.')
+  return path.join(app.getPath('userData'), 'runtime', `Wan2GP-${hash}`)
 }
 
 function getRuntimeModelsDir(): string {
@@ -426,8 +473,7 @@ function getRuntimeFiles(): string[] {
     path.join(root, 'backend', 'uv.lock'),
     path.join(root, 'scripts', 'install-python-dependencies.ps1'),
     path.join(root, 'scripts', 'install-wangp-stack.ps1'),
-    path.join(root, 'scripts', 'ensure-wan2gp.ps1'),
-    path.join(root, 'scripts', 'wangp-source.json'),
+    path.join(root, 'Wan2GP', '.aivs-wangp-source.json'),
     path.join(root, 'wgp_config.json'),
     path.join(root, 'scripts', 'wangp-stacks.json'),
     path.join(root, 'backend', 'wangp_model_packs.py'),
@@ -493,9 +539,10 @@ export function getRuntimeEnvironment(): NodeJS.ProcessEnv {
 }
 
 export function isPythonReady(): { ready: boolean } {
-  if (process.platform !== 'win32' || isDev) return { ready: true }
+  if (process.platform !== 'win32') return { ready: isWanGPRuntimeReady() }
+  if (isDev) return { ready: isWanGPRuntimeReady() }
   const expectedHash = getRuntimeHash()
-  const wangpReady = isWanGPRoot(path.join(app.getPath('userData'), 'runtime', 'Wan2GP'))
+  const wangpReady = isWanGPRuntimeReady()
   return {
     ready: Boolean(expectedHash) &&
       expectedHash === readHash(getInstalledHashPath()) &&
@@ -819,6 +866,7 @@ export function downloadModelPacks(
     let cancelled = false
     let spawnFailed = false
     let structuredProgressSeen = false
+    let cancelFallback: NodeJS.Timeout | null = null
     const remainders = { stdout: '', stderr: '' }
     const diagnosticLines: string[] = []
     const emitProgress = (progress: ModelPackProgress): void => {
@@ -833,9 +881,22 @@ export function downloadModelPacks(
     const child = spawn(
       pythonExe,
       [runner, '--wangp-root', wangpRoot, '--app-data-dir', app.getPath('userData'), '--checkpoints-dir', checkpointsDir, '--download', ...ids],
-      { windowsHide: true, cwd: wangpRoot, env: getRuntimeEnvironment() },
+      { windowsHide: true, cwd: wangpRoot, env: getRuntimeEnvironment(), stdio: ['pipe', 'pipe', 'pipe'] },
     )
     activeModelPackProcess = child
+    child.stdin?.on('error', () => { /* Cancellation owns the terminal state; the fallback handles a closed pipe. */ })
+    ;(child as ChildProcess & { aivsCancel?: () => void }).aivsCancel = () => {
+      if (cancelled) return
+      cancelled = true
+      const stdin = child.stdin
+      if (stdin?.writable && !stdin.destroyed && !stdin.writableEnded) {
+        stdin.end('cancel\n')
+      }
+      cancelFallback = setTimeout(() => {
+        if (activeModelPackProcess === child && !child.killed) child.kill('SIGTERM')
+      }, 5_000)
+      cancelFallback.unref()
+    }
     emitProgress(packProgress('preparing'))
     const consumeLine = (raw: string): void => {
       const line = raw.trim()
@@ -889,6 +950,7 @@ export function downloadModelPacks(
     child.stderr.on('data', (chunk: Buffer) => consume(chunk, 'stderr'))
     child.once('error', (error) => {
       spawnFailed = true
+      if (cancelFallback) clearTimeout(cancelFallback)
       activeModelPackProcess = null
       emitProgress(packProgress('error', { ...activePack, message: error.message }))
       reject(new Error(`Model-pack download failed to start: ${error.message}`))
@@ -896,6 +958,7 @@ export function downloadModelPacks(
     })
     child.once('close', (code) => {
       if (spawnFailed) return
+      if (cancelFallback) clearTimeout(cancelFallback)
       activeModelPackProcess = null
       consumeLine(remainders.stdout)
       consumeLine(remainders.stderr)
@@ -918,7 +981,6 @@ export function downloadModelPacks(
         activeModelPackProgress = null
       }
     })
-    ;(child as ChildProcess & { aivsCancel?: () => void }).aivsCancel = () => { cancelled = true; child.kill() }
   })
 }
 
@@ -972,7 +1034,16 @@ export function deleteModelPack(id: string): Promise<void> {
 export async function downloadPythonEmbed(
   onProgress: (progress: PythonSetupProgress) => void,
 ): Promise<void> {
-  if (process.platform !== 'win32' || isDev) return
+  if (isDev) {
+    if (!isWanGPRuntimeReady()) throw new Error(`WanGP source is missing at ${getWanGPRoot()}. Set WANGP_ROOT to your Wan2GP folder.`)
+    onProgress({ status: 'complete', percent: 100, downloadedBytes: 0, totalBytes: 0, speed: 0, message: 'WanGP is ready' })
+    return
+  }
+  if (process.platform !== 'win32') {
+    prepareBundledWanGP()
+    onProgress({ status: 'complete', percent: 100, downloadedBytes: 0, totalBytes: 0, speed: 0, message: 'WanGP is ready' })
+    return
+  }
   const expectedHash = getRuntimeHash()
   if (!expectedHash) throw new Error('Bundled runtime definition is unavailable.')
 
@@ -982,13 +1053,7 @@ export async function downloadPythonEmbed(
     onProgress({ status: 'extracting', percent: 5, downloadedBytes: 0, totalBytes: 0, speed: 0, message: 'Preparing embedded Python' })
     copyBootstrap(destDir)
     onProgress({ status: 'installing', percent: 10, downloadedBytes: 0, totalBytes: 0, speed: 0, message: 'Starting first-time setup' })
-    const bootstrap = path.join(process.resourcesPath, 'scripts', 'ensure-wan2gp.ps1')
-    const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', bootstrap, '-Mode', 'Managed', '-RootDir', getWanGPRoot(), '-GitExe', findBundledGitExecutable() ?? ''], { windowsHide: true })
-      child.once('error', reject)
-      child.once('close', (code) => code === 0 ? resolve() : reject(new Error(`WanGP source setup failed (exit code ${code ?? 'unknown'}).`)))
-    })
+    prepareBundledWanGP()
     await installDependencies(path.join(destDir, 'python.exe'), onProgress)
     fs.writeFileSync(getInstalledHashPath(), expectedHash, 'utf-8')
     onProgress({ status: 'complete', percent: 100, downloadedBytes: 0, totalBytes: 0, speed: 0, message: 'WanGP is ready' })
@@ -998,5 +1063,25 @@ export async function downloadPythonEmbed(
     logger.error(`[python-setup] ${message}`)
     onProgress({ status: 'error', percent: 0, downloadedBytes: 0, totalBytes: 0, speed: 0, message: 'Setup failed' })
     throw error
+  }
+}
+
+function prepareBundledWanGP(): void {
+  if (isWanGPRuntimeReady()) return
+  const source = path.join(process.resourcesPath, 'Wan2GP')
+  if (!isWanGPRoot(source)) throw new Error('Bundled WanGP source is incomplete.')
+  const expectedHash = getBundledWanGPHash()
+  if (getWanGPSourceHash(source) !== expectedHash) throw new Error('Bundled WanGP source failed its integrity check.')
+  const destination = getWanGPRoot()
+  if (fs.existsSync(destination)) throw new Error(`WanGP runtime is incomplete at ${destination}. Move that folder aside and retry setup.`)
+  const parent = path.dirname(destination)
+  fs.mkdirSync(parent, { recursive: true })
+  const temporary = fs.mkdtempSync(path.join(parent, '.wangp-copy-'))
+  try {
+    fs.cpSync(source, temporary, { recursive: true, errorOnExist: true, force: false })
+    if (getWanGPSourceHash(temporary) !== expectedHash) throw new Error('WanGP source copy failed its integrity check.')
+    fs.renameSync(temporary, destination)
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
   }
 }
