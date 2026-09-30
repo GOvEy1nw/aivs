@@ -1,4 +1,3 @@
-import { AivsLogo } from "./AivsLogo";
 import { useAppSettings } from "../contexts/AppSettingsContext";
 import { useEffect } from "react";
 

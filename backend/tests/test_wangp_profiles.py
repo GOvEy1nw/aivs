@@ -114,3 +114,75 @@ def test_resolve_profiles_returns_isolated_defaults_without_runtime_profile_meth
     assert isinstance(nested, dict)
     nested["value"] = 2
     assert source == {"nested": {"value": 1}}
+
+
+def test_qwen_image_21_pruna_recipe_uses_the_native_accelerator_profile() -> None:
+    recipe = {
+        "activated_loras": ["pruna"],
+        "loras_multipliers": "1",
+        "num_inference_steps": 8,
+        "sample_solver": "pruna",
+        "guidance_scale": 1,
+        "custom_settings": {"qwen21_kv_cache": "Disabled", "rgba": "Disabled"},
+    }
+
+    class Module:
+        def are_model_types_compatible(self, source: str, target: str) -> bool:
+            return source == target
+
+        def merge_loras_settings(self, *_args: object) -> tuple[list[str], str]:
+            raise AssertionError("the Pruna recipe is the only LoRA layer")
+
+        def fix_settings(self, _model_type: str, _settings: dict[str, object], min_settings_version: float = 0) -> None:
+            assert min_settings_version == 2.38
+
+    class Session:
+        def get_default_settings(self, model_type: str) -> dict[str, object]:
+            assert model_type == "qwen_image_21_7B"
+            return {"image_mode": 1, "num_inference_steps": 40, "guidance_scale": 4.0}
+
+        def get_model_settings(self, model_type: str, setting_id: str | None = None) -> dict[str, object]:
+            assert model_type == "qwen_image_21_7B"
+            assert setting_id == "accelerator_profile:qwen21/Pruna v0.1 8 Steps.json"
+            return {"content": recipe}
+
+        def _ensure_runtime(self) -> object:
+            return type("Runtime", (), {"module": Module()})()
+
+    resolved = resolve_profiles(
+        Session(),
+        "qwen_image_21_7B",
+        accelerator_profile_id="qwen_image_21_pruna_v0_1_8_steps",
+    )
+
+    for key, value in recipe.items():
+        assert resolved[key] == value
+
+
+def test_resolve_profiles_reports_a_missing_native_session_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wangp_profiles,
+        "PROFILE_BINDINGS",
+        {"accelerator": ProfileBinding("accelerator", selector_by_model_type={"model": "accelerator_profile:one"})},
+    )
+
+    class Session:
+        def get_default_settings(self, _model_type: str) -> dict[str, object]:
+            return {}
+
+        def _ensure_runtime(self) -> object:
+            module = type(
+                "Module",
+                (),
+                {
+                    "are_model_types_compatible": lambda *_args: True,
+                    "merge_loras_settings": lambda *_args: ([], ""),
+                    "fix_settings": lambda *_args, **_kwargs: None,
+                },
+            )()
+            return type("Runtime", (), {"module": module})()
+
+    with pytest.raises(RuntimeError, match="missing WanGP session operation 'get_model_settings'"):
+        resolve_profiles(Session(), "model", accelerator_profile_id="accelerator")

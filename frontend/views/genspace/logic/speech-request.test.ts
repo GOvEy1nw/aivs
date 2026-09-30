@@ -73,4 +73,25 @@ describe("buildSpeechGenerationCommand", () => {
       ),
     ).toBeNull();
   });
+
+  it("keeps a third speaker paired with its third reference", () => {
+    const settings: SpeechSettings = {
+      profileId: "omnivoice",
+      references: [
+        { path: "D:\\voices\\one.wav", url: "file:///D:/voices/one.wav" },
+        { path: "D:\\voices\\two.wav", url: "file:///D:/voices/two.wav" },
+        { path: "D:\\voices\\three.wav", url: "file:///D:/voices/three.wav" },
+      ],
+      segments: [
+        { speaker: 1, text: "One" },
+        { speaker: 2, text: "Two" },
+        { speaker: 3, text: "Three" },
+      ],
+      seed: null,
+    };
+
+    expect(buildSpeechGenerationCommand("ignored", settings, false)?.request.text).toBe(
+      "Speaker 1: One\nSpeaker 2: Two\nSpeaker 3: Three",
+    );
+  });
 });

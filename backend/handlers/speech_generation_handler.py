@@ -34,8 +34,8 @@ class SpeechGenerationHandler(StateHandlerBase):
             raise HTTPError(503, "WANGP_UNAVAILABLE: WanGP is not available.")
         profile = self._validate_profile(req)
         references = self._validate_references(req, profile)
-        if len(references) == 2:
-            self._validate_dialogue(req.text)
+        if len(references) >= 2:
+            self._validate_dialogue(req.text, len(references))
         try:
             self._generation.start_generation_job(f"speech-{uuid.uuid4().hex[:8]}")
         except RuntimeError as exc:
@@ -122,10 +122,12 @@ class SpeechGenerationHandler(StateHandlerBase):
         return trimmed
 
     @staticmethod
-    def _validate_dialogue(text: str) -> None:
+    def _validate_dialogue(text: str, reference_count: int) -> None:
         speakers = {
             int(match.group(1))
-            for match in re.finditer(r"^Speaker ([12]):\s*(?=\S)", text, re.MULTILINE)
+            for match in re.finditer(r"^Speaker ([123]):\s*(?=\S)", text, re.MULTILINE)
         }
-        if speakers != {1, 2}:
-            raise HTTPError(400, "SPEECH_DIALOGUE_INVALID: Two voice references require non-empty Speaker 1 and Speaker 2 segments.")
+        expected = set(range(1, reference_count + 1))
+        if speakers != expected:
+            labels = " and ".join(f"Speaker {index}" for index in sorted(expected))
+            raise HTTPError(400, f"SPEECH_DIALOGUE_INVALID: {reference_count} voice references require non-empty {labels} segments.")

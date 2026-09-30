@@ -14,10 +14,12 @@ from wangp_model_packs import (
     _delete_pack_files,
     _download_model_dependencies,
     _download_pack,
+    _effective_pack_model_def,
     _load_state,
     _pack_model_def,
     _pack_progress_callback,
     _process_download_definitions,
+    _resolve_pack_paths,
     _resolve_pack_profile_settings,
 )
 
@@ -89,6 +91,14 @@ def test_curated_video_packs_resolve_profiles_or_model_defaults() -> None:
 
         def get_model_settings(self, model_type: str, setting_id: str | None = None) -> dict[str, object]:
             calls.append(("profile", (model_type, setting_id), {}))
+            if model_type == "qwen_image_21_7B":
+                return {
+                    "content": {
+                        "activated_loras": [
+                            "https://huggingface.co/DeepBeepMeep/Qwen_image_2/resolve/main/loras/p_qwen_image_2.1_8step_v0.1.safetensors"
+                        ]
+                    }
+                }
             return {"content": {"profile": setting_id}}
 
         def _ensure_runtime(self) -> object:
@@ -114,6 +124,12 @@ def test_curated_video_packs_resolve_profiles_or_model_defaults() -> None:
         PACKS["minimax-h3-fast"],
         "minimax_h3_ref2va_pruned",
     )
+    qwen_settings = _resolve_pack_profile_settings(
+        session,
+        "qwen_image_21_7b_pruna",
+        PACKS["qwen_image_21_7b_pruna"],
+        "qwen_image_21_7B",
+    )
 
     assert h3_settings["config"] == "upstream"
     assert source == {"config": "upstream", "nested": {"value": 1}}
@@ -124,11 +140,16 @@ def test_curated_video_packs_resolve_profiles_or_model_defaults() -> None:
     assert h3_fast_settings["model_type"] == "minimax_h3_ref2va_pruned"
     assert h3_fast_settings["activated_loras"] == []
     assert h3_fast_settings["loras_multipliers"] == ""
+    assert qwen_settings["activated_loras"] == [
+        "https://huggingface.co/DeepBeepMeep/Qwen_image_2/resolve/main/loras/p_qwen_image_2.1_8step_v0.1.safetensors"
+    ]
     assert calls == [
         ("defaults", ("minimax_h3_fl2va_pruned",), {}),
         ("defaults", ("ltx2_25_22B_distilled",), {}),
         ("defaults", ("minimax_h3_ref2va_pruned",), {}),
         ("profile", ("minimax_h3_ref2va_pruned", "accelerator_profile:minimax_h3_ref2va/Turbo Lightx2v Ref2V 4 Steps v0.1.json"), {}),
+        ("defaults", ("qwen_image_21_7B",), {}),
+        ("profile", ("qwen_image_21_7B", "accelerator_profile:qwen21/Pruna v0.1 8 Steps.json"), {}),
     ]
     assert _resolve_pack_profile_settings(
         session,
@@ -158,12 +179,52 @@ def test_requested_image_packs_use_exact_wangp_model_profiles() -> None:
     expected_model_types = {
         "flux2_klein_9b": "flux2_klein_9b",
         "qwen_image_2512_20B": "qwen_image_2512_20B",
+        "qwen_image_21_7b_pruna": "qwen_image_21_7B",
         "qwen_image_edit_plus2_20B": "qwen_image_edit_plus2_20B",
         "krea2_turbo_edit": "krea2_turbo_edit",
     }
 
     for pack_id, model_type in expected_model_types.items():
         assert PACKS[pack_id]["model_type"] == model_type
+
+    assert PACKS["qwen_image_21_7b_pruna"]["accelerator_profile_id"] == (
+        "qwen_image_21_pruna_v0_1_8_steps"
+    )
+
+
+def test_h3_pack_resolves_the_runtime_video_vae_variant(monkeypatch: pytest.MonkeyPatch) -> None:
+    import wangp_model_packs
+
+    class Handler:
+        def resolve_runtime_model_def(
+            self, model_def: dict[str, Any], runtime_context: dict[str, object]
+        ) -> dict[str, Any]:
+            if runtime_context["transformer_quantization"] == "int8":
+                return {**model_def, "video_vae_file": "minimax_h3/minimax_h3_video_vae_int8_convrot.safetensors"}
+            return model_def
+
+    class Runtime:
+        server_config = {"mixed_precision": "0", "vae_precision": "16"}
+        transformer_quantization = "int8"
+        text_encoder_quantization = "int8"
+
+        def get_model_def(self, _model_type: str) -> dict[str, Any]:
+            return {"system_configs2": {"_name": "Video VAE"}}
+
+        def get_model_handler(self, _model_type: str) -> Handler:
+            return Handler()
+
+    monkeypatch.setattr(wangp_model_packs, "_resolve_pack_profile_settings", lambda *_args: {})
+
+    model_def = _effective_pack_model_def(
+        Runtime(),
+        object(),
+        "minimax-h3-fast",
+        PACKS["minimax-h3-fast"],
+        "minimax_h3_fl2va_pruned",
+    )
+
+    assert model_def["video_vae_file"] == "minimax_h3/minimax_h3_video_vae_int8_convrot.safetensors"
 
 
 class FakeWanGP:
@@ -324,6 +385,31 @@ def test_process_download_definitions_forwards_native_context() -> None:
         {"repoId": "one", "gen": context},
         {"repoId": "two", "gen": context},
     ]
+
+
+def test_utility_pack_uses_official_global_shared_inventory(monkeypatch, tmp_path: Path) -> None:
+    import wangp_model_packs
+
+    class UtilityWanGP:
+        def __init__(self) -> None:
+            self.processed: list[dict[str, object]] = []
+
+        def query_global_shared_model_files(self) -> dict[str, object]:
+            return {"repoId": "utility"}
+
+        def process_files_def(self, **values: object) -> None:
+            self.processed.append(values)
+
+    wgp = UtilityWanGP()
+    expected = tmp_path / "utility.bin"
+    expected.write_text("installed", encoding="utf-8")
+    monkeypatch.setattr(wangp_model_packs, "_download_def_paths", lambda _manager, definition: {expected} if definition == {"repoId": "utility"} else set())
+
+    assert _resolve_pack_paths(wgp, object(), object(), "utility") == {expected}
+    monkeypatch.setattr(wangp_model_packs, "_resolve_pack_paths", lambda *_args: {expected})
+
+    assert _download_pack(wgp, object(), object(), "utility") == {expected}
+    assert wgp.processed[0]["repoId"] == "utility"
 
 
 def test_pack_progress_callback_emits_safe_structured_event(capsys) -> None:

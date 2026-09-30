@@ -53,6 +53,7 @@ function storedInput(
     role: input.role,
     path: resolvePath(input.url, assetPaths),
     type: input.type,
+    useAudioTrack: input.useAudioTrack,
     trimStartTime: input.trimStartTime,
     trimDuration: input.trimDuration,
     mediaDuration: input.mediaDuration,
@@ -89,6 +90,7 @@ export function buildGeneratedImageAsset({
     generationParams: {
       mode: upscale ? "upscale" : "text-to-image",
       prompt: snapshot.prompt,
+      promptEnhancement: snapshot.promptEnhancement,
       model: upscale?.method ?? (snapshot.settings.imageProfileId || "z_image_turbo"),
       duration: 5,
       resolution: snapshot.settings.imageResolution,
@@ -181,6 +183,7 @@ export function buildGeneratedVideoAsset({
     generationParams: {
       mode,
       prompt: snapshot.prompt,
+      promptEnhancement: snapshot.promptEnhancement,
       model: upscale?.method ?? snapshot.settings.model,
       videoProfileId: snapshot.settings.videoProfileId,
       styleId: snapshot.videoTool ? undefined : snapshot.settings.styleId,
@@ -199,6 +202,7 @@ export function buildGeneratedVideoAsset({
       cameraMotion: "none",
       imageAspectRatio: snapshot.settings.aspectRatio,
       imageSteps: snapshot.settings.imageSteps,
+      useAudioTrack: snapshot.useAudioTrack,
       inputImageUrl,
       inputAudioUrl,
       inputImagePath: resolvePath(inputImageUrl, snapshot.assetPaths),

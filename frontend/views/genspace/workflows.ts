@@ -106,7 +106,8 @@ export function getCompatibleVideoProfiles(
   workflowId: Extract<QuickGenWorkflowId, `video:${string}`>,
 ): ModelProfile[] {
   if (workflowId === "video:generate") return [...profiles];
-  const operationId = workflowId === "video:retake" ? "retake" : workflowId.slice(11);
+  if (workflowId === "video:retake") return [];
+  const operationId = workflowId.slice(11);
   if (operationId === "upscale") return [...profiles];
   return profiles.filter((profile) =>
     selectVideoEditOperations(profile).some(({ id }) => id === operationId),

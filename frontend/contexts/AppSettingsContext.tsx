@@ -12,11 +12,6 @@ import { useBackendLifecycle } from './BackendLifecycleContext'
 
 export interface InferenceSettings {
   steps: number
-  useUpscaler: boolean
-}
-
-export interface FastModelSettings {
-  useUpscaler: boolean
 }
 
 export interface OutputSettings {
@@ -30,12 +25,7 @@ export interface OutputSettings {
 }
 
 export interface PreviewSettings {
-  mode: 'off' | 'rgb' | 'tae' | 'tiny_vae_frames'
-  updateRate: 'adaptive' | 'every_step' | 'every_2' | 'every_4'
-  device: 'auto' | 'cuda' | 'cpu'
-  maxEdge: number
-  previewFps: 2 | 4 | 8 | 16
-  webpQuality: number
+  mode: 'rgb' | 'tiny_vae_frames' | 'tiny_vae_video'
 }
 
 export interface AppSettings {
@@ -45,14 +35,12 @@ export interface AppSettings {
   performanceProfile: 1 | 2 | 3 | 4 | 4.5 | 5
   reduceVram: 'disabled' | '1' | '2' | '3'
   loadOnStartup: boolean
-  useLocalTextEncoder: boolean
-  fastModel: FastModelSettings
   proModel: InferenceSettings
-  promptCacheSize: number
   seedLocked: boolean
   lockedSeed: number
   outputSettings: OutputSettings
   previewSettings: PreviewSettings
+  previewMigrationNotice: string
   quickGenFavouriteWorkflows: string[]
 }
 
@@ -67,12 +55,7 @@ const DEFAULT_OUTPUT_SETTINGS: OutputSettings = {
 }
 
 const DEFAULT_PREVIEW_SETTINGS: PreviewSettings = {
-  mode: 'tae',
-  updateRate: 'adaptive',
-  device: 'auto',
-  maxEdge: 512,
-  previewFps: 16,
-  webpQuality: 72,
+  mode: 'tiny_vae_video',
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -82,14 +65,12 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   performanceProfile: 4,
   reduceVram: 'disabled',
   loadOnStartup: true,
-  useLocalTextEncoder: true,
-  fastModel: { useUpscaler: true },
-  proModel: { steps: 20, useUpscaler: true },
-  promptCacheSize: 1,
+  proModel: { steps: 20 },
   seedLocked: false,
   lockedSeed: 42,
   outputSettings: DEFAULT_OUTPUT_SETTINGS,
   previewSettings: DEFAULT_PREVIEW_SETTINGS,
+  previewMigrationNotice: '',
   quickGenFavouriteWorkflows: [],
 }
 
@@ -112,10 +93,7 @@ function normalizeAppSettings(data: Partial<AppSettings>): AppSettings {
     performanceProfile: data.performanceProfile ?? DEFAULT_APP_SETTINGS.performanceProfile,
     reduceVram: data.reduceVram ?? DEFAULT_APP_SETTINGS.reduceVram,
     loadOnStartup: data.loadOnStartup ?? DEFAULT_APP_SETTINGS.loadOnStartup,
-    useLocalTextEncoder: data.useLocalTextEncoder ?? DEFAULT_APP_SETTINGS.useLocalTextEncoder,
-    fastModel: data.fastModel ?? DEFAULT_APP_SETTINGS.fastModel,
     proModel: data.proModel ?? DEFAULT_APP_SETTINGS.proModel,
-    promptCacheSize: data.promptCacheSize ?? DEFAULT_APP_SETTINGS.promptCacheSize,
     seedLocked: data.seedLocked ?? DEFAULT_APP_SETTINGS.seedLocked,
     lockedSeed: data.lockedSeed ?? DEFAULT_APP_SETTINGS.lockedSeed,
     outputSettings: {
@@ -126,6 +104,7 @@ function normalizeAppSettings(data: Partial<AppSettings>): AppSettings {
       ...DEFAULT_PREVIEW_SETTINGS,
       ...(data.previewSettings ?? {}),
     },
+    previewMigrationNotice: data.previewMigrationNotice ?? '',
     quickGenFavouriteWorkflows: data.quickGenFavouriteWorkflows ?? DEFAULT_APP_SETTINGS.quickGenFavouriteWorkflows,
   }
 }

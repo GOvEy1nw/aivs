@@ -89,4 +89,4 @@ dmg:
 publish:
   provider: github
   owner: GOvEy1nw
-  repo: AI-Video-Studio
+  repo: aivs

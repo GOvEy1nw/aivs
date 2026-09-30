@@ -16,7 +16,6 @@ from typing import Any, Callable, TypeAlias, cast
 from services.wangp_downloads import download_context, download_progress
 from services.wangp_profiles import resolve_profiles
 
-
 CURATED_VIDEO_PACK_IDS = frozenset(
     {
         "ltx2_fast",
@@ -25,6 +24,7 @@ CURATED_VIDEO_PACK_IDS = frozenset(
         "minimax-h3-quality",
     }
 )
+
 PackValue: TypeAlias = str | list[str] | dict[str, str]
 
 
@@ -48,6 +48,12 @@ PACKS: dict[str, dict[str, PackValue]] = {
         "name": "Qwen Image Edit",
         "kind": "model",
         "model_type": "qwen_image_edit_plus2_20B",
+    },
+    "qwen_image_21_7b_pruna": {
+        "name": "Qwen Image 2.1 (Pruna)",
+        "kind": "model",
+        "model_type": "qwen_image_21_7B",
+        "accelerator_profile_id": "qwen_image_21_pruna_v0_1_8_steps",
     },
     "hidream_o1": {"name": "HiDream O1", "kind": "model", "model_type": "hidream_o1_dev"},
     "ideogram4_int8": {
@@ -482,8 +488,6 @@ def _resolve_pack_profile_settings(
     pack: dict[str, PackValue],
     model_type: str,
 ) -> dict[str, object]:
-    if pack_id not in CURATED_VIDEO_PACK_IDS:
-        return {}
     accelerator_profile_ids = pack.get("accelerator_profile_ids")
     accelerator_profile_id = (
         accelerator_profile_ids.get(model_type)
@@ -491,6 +495,12 @@ def _resolve_pack_profile_settings(
         else pack.get("accelerator_profile_id")
     )
     preset_profile_id = pack.get("preset_profile_id")
+    if (
+        pack_id not in CURATED_VIDEO_PACK_IDS
+        and accelerator_profile_id is None
+        and preset_profile_id is None
+    ):
+        return {}
     return resolve_profiles(
         session,
         model_type,
@@ -506,11 +516,25 @@ def _effective_pack_model_def(
     pack: dict[str, PackValue],
     model_type: str,
 ) -> dict[str, Any]:
-    return _pack_model_def(
+    model_def = _pack_model_def(
         wgp,
         pack,
         model_type,
         _resolve_pack_profile_settings(session, pack_id, pack, model_type),
+    )
+    resolver = getattr(wgp.get_model_handler(model_type), "resolve_runtime_model_def", None)
+    if resolver is None:
+        return model_def
+    server_config = wgp.server_config
+    return resolver(
+        model_def,
+        dict(
+            server_config,
+            transformer_quantization=wgp.transformer_quantization,
+            text_encoder_quantization=wgp.text_encoder_quantization,
+            mixed_precision=server_config.get("mixed_precision", "0"),
+            vae_precision=server_config.get("vae_precision", "16"),
+        ),
     )
 
 
@@ -556,7 +580,7 @@ def _download_pack(
     pack = PACKS[pack_id]
     kind = pack["kind"]
     if kind == "utility":
-        definition = wgp.query_core_shared_model_files()
+        definition = wgp.query_global_shared_model_files()
         _process_download_definitions(wgp, definition, gen)
     elif kind == "prompt":
         assets = import_module("shared.prompt_enhancer.assets")
@@ -584,7 +608,7 @@ def _resolve_pack_paths(wgp: Any, manager: Any, session: Any, pack_id: str) -> s
     pack = PACKS[pack_id]
     kind = pack["kind"]
     if kind == "utility":
-        return _download_def_paths(manager, wgp.query_core_shared_model_files())
+        return _download_def_paths(manager, wgp.query_global_shared_model_files())
     if kind == "prompt":
         assets = import_module("shared.prompt_enhancer.assets")
         definitions = cast(list[dict[str, Any]], assets.query_prompt_enhancer_download_defs())

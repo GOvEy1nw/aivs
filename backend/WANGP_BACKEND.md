@@ -16,8 +16,11 @@ The release snapshot remains identified by its source-content hash; this revisio
 is the tested baseline, not an automatic source updater or Git requirement.
 
 Use `pnpm wangp:check` to inspect the external development source without
-changing it. Use `pnpm wangp:validate` for focused compatibility validation, or
-`pnpm wangp:validate:full` for the full external-checkout gate.
+changing it. `pnpm wangp:validate` additionally runs a static, no-import contract
+check for the session API, enhancer signature, curated default files, and native
+profile binding files, followed by focused source tests. It does not download
+models or execute GPU work. `pnpm wangp:validate:full` adds the existing type and
+frontend build checks; an installed-model application smoke remains separate.
 
 ## Required
 
@@ -61,15 +64,15 @@ changing it. Use `pnpm wangp:validate` for focused compatibility validation, or
 - ACE-Step song-description enhancement remains LM CoT through `model_mode`: manual/off `1`, manual/on `2`, auto-duration/off `4`, and auto-duration/on `3`. Auto Lyrics passes the song description as lyrics context with `prompt_enhancer="T"`; Instrumental and Custom Lyrics send `""`. Empty Custom Lyrics is rejected, while `/api/music/compose-lyrics` remains a separate editable pre-generation operation.
 - Progress comes from WanGP's native generation events and native download callbacks, with
   stdout/stderr also streamed into the bridge.
-- AiVS maps saved TAE preview mode to WanGP's `generation_preview=tiny_vae_video`,
+- AiVS saves the native `generation_preview` modes `rgb`, `tiny_vae_frames`, and `tiny_vae_video`,
   producing still images for image jobs and MP4 previews for supported video jobs.
-  Tiny VAE frames uses `tiny_vae_frames`; RGB uses `rgb`. Legacy Off preferences
-  also fall back to RGB. Mode changes
+  with Tiny VAE video as the default. Legacy TAE settings migrate to `tiny_vae_video`;
+  Off and unsupported values migrate to RGB with a dismissible settings notice. Mode changes
   unload the cached model before the next
   generation so its decoder is rebuilt with the selected mode.
 - WanGP owns TinyVAE selection, automatic decoder downloads, fallback and tuning.
-  Saved AiVS preview device, update rate, size, FPS and quality fields remain readable
-  for project/settings compatibility, but upstream controls these values.
+  Legacy preview device, update rate, size, FPS and quality fields are removed during
+  stored-settings migration; current API writes accept only the native mode.
   AiVS consumes native `PreviewUpdate.image` and `.video`; queue updates retain the
   latest preview until another arrives. No fork-specific decoder installer is needed.
 - Cancel requests signal the active WanGP model directly instead of terminating a subprocess.

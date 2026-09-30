@@ -1,10 +1,12 @@
 import {
   useCallback,
+  useRef,
   type Dispatch,
   type SetStateAction,
 } from "react";
 import type { ReframePanelState } from "../video/ReframePanel";
 import type { UseGenerationReturn } from "../../../hooks/use-generation";
+import { QueueAdmissionRejectedError } from "../../../contexts/GenerationQueueContext";
 import type { RetakeSubmitParams } from "../../../hooks/use-retake";
 import type { ModelProfile } from "../../../types/model-profiles";
 import type { MusicSettings } from "../../../types/music";
@@ -52,6 +54,7 @@ import type { UpscaleMethodId } from "../../../types/upscale";
 import type { ReferenceEntity } from "../../../../shared/reference-library";
 import { compileVideoPrompt, type VideoComposerStateV1 } from "../logic/video-prompt-composer";
 import { stageEntityInputs, stageReferenceSnapshots } from "../logic/reference-entity-staging";
+import { usePromptEnhancement, type PromptEnhancementRequest } from "./usePromptEnhancement";
 
 interface RetakeInput {
   videoPath: string | null;
@@ -145,7 +148,45 @@ export function useGenSpaceGenerationActions({
   upscaleScale?: number | null;
   submitRetake: (params: RetakeSubmitParams, snapshot?: RetakeSubmissionSnapshot | null) => Promise<void>;
 }) {
+  const submissionInFlight = useRef(false);
+  const compileDraft = (brief: string) => mode === "video" && videoMode === "generate"
+    ? compileVideoPrompt({
+        brief, composer, entities: referenceEntities, fallbackSnapshots: composer.referencedEntities,
+        reservedAliases: imageInputs.flatMap((input) => input.alias ? [input.alias] : []),
+        retainedRoles: imageInputs.map((input) => input.role),
+        policy: videoProfiles.find((profile) => profile.id === settings.videoProfileId)?.promptComposer
+          ?? { promptFormat: "plain", entityMediaMode: "text-only", voiceReference: false },
+      }) : null;
+  const enhancement = usePromptEnhancement(JSON.stringify({
+    currentProjectId, mode, imageMode, videoMode, audioSubmode, prompt, settings, framingSettings,
+    composer, referenceEntities, imageInputs, editImage, editToolMode, editMask, editOutpaint,
+    inputImage, inputAudio, useAudioTrack,
+  }), (): PromptEnhancementRequest => {
+    if (!currentProjectId || (mode !== "image" && mode !== "video") ||
+        (mode === "image" && !["create", "edit"].includes(imageMode)) ||
+        (mode === "video" && videoMode !== "generate")) throw new Error("Enhancement is unavailable for this workflow.");
+    const compiled = compileDraft(prompt);
+    if (compiled && !compiled.ok) throw new Error(compiled.error ?? "Unable to compile the prompt.");
+    const effective = applyFramingPrefix(compiled?.prompt ?? prompt, mode === "video" || imageMode === "create" ? framingSettings : null);
+    const command = mode === "video"
+      ? buildVideoGenerationCommand({ prompt: effective, settings: compiled?.durationSeconds ? { ...settings, duration: compiled.durationSeconds } : settings,
+          imageInputs: [...imageInputs, ...(compiled?.entityInputs ?? [])], inputImage, inputAudio, useAudioTrack, enhancePrompt: false })
+      : buildImageGenerationCommand(effective, settings, imageMode === "edit" && editToolMode !== "edit" ? [] : imageInputs, false,
+          imageMode === "edit" && editImage ? { image: editImage, mask: editMask, outpaint: editOutpaint } : undefined);
+    const images = command.inputMedia.filter((item) => item.type === "image" || (!item.type && mode === "image"));
+    return {
+      prompt: effective, mode, modelProfileId: mode === "video" ? settings.videoProfileId : settings.imageProfileId,
+      inputImagePath: "imagePath" in command ? command.imagePath : command.edit?.image.path,
+      endImagePath: images.find((item) => item.role === "end_image")?.path,
+      controlImagePath: images.find((item) => item.role.startsWith("control_"))?.path,
+      referenceImagePaths: images.filter((item) => item.role.startsWith("reference")).map((item) => item.path),
+      durationSeconds: "normalizedSettings" in command ? command.normalizedSettings.duration : undefined,
+    };
+  });
   const submit = useCallback(async () => {
+    if (submissionInFlight.current) return;
+    submissionInFlight.current = true;
+    try {
     const upscaleMediaKind = mode === "image" && imageMode === "upscale"
       ? "image" as const
       : mode === "video" && videoMode === "reframe" && selectedVideoTool === "upscale"
@@ -219,7 +260,7 @@ export function useGenSpaceGenerationActions({
       ? serializeRegionPrompt(regionPrompt)
       : prompt;
     const hasSequencePrompt = composer.mode === "sequence" && composer.sequence.scenes.some((scene) => scene.shots.some((shot) => shot.description.trim()));
-    if (!authoredPrompt.trim() && !hasSequencePrompt && !(mode === "music" && audioSubmode === "speech" && speechSettings?.references.length === 2)) return;
+    if (!authoredPrompt.trim() && !hasSequencePrompt && !(mode === "music" && audioSubmode === "speech" && (speechSettings?.references.length ?? 0) >= 2)) return;
 
     if (mode === "music" && audioSubmode === "sfx") {
       if (!currentProjectId) return;
@@ -305,6 +346,7 @@ export function useGenSpaceGenerationActions({
         inputs: submittedInput,
         inputImage: null,
         inputAudio: null,
+        useAudioTrack: command.useAudioTrack,
         videoTool: selectedVideoTool,
         assetPaths: projectAssets.map(({ url, path }) => ({ url, path })),
       };
@@ -323,23 +365,12 @@ export function useGenSpaceGenerationActions({
       return;
     }
 
-    const selectedVideoProfile = videoProfiles.find((profile) => profile.id === settings.videoProfileId);
-    const compiledVideo = mode === "video" && videoMode === "generate"
-      ? compileVideoPrompt({
-          brief: authoredPrompt,
-          composer,
-          entities: referenceEntities,
-          fallbackSnapshots: composer.referencedEntities,
-          reservedAliases: imageInputs.flatMap((input) => input.alias ? [input.alias] : []),
-          retainedRoles: imageInputs.map((input) => input.role),
-          policy: selectedVideoProfile?.promptComposer ?? { promptFormat: "plain", entityMediaMode: "text-only", voiceReference: false },
-        })
-      : null;
+    const compiledVideo = compileDraft(authoredPrompt);
     if (compiledVideo && !compiledVideo.ok) {
       setLocalError(compiledVideo.error ?? "Unable to compile video prompt.");
       return;
     }
-    const effectivePrompt = applyFramingPrefix(
+    const effectivePrompt = enhancement.accepted?.effectivePrompt ?? applyFramingPrefix(
       compiledVideo?.prompt ?? authoredPrompt,
       mode === "video" || imageMode === "create"
         ? framingSettings
@@ -362,7 +393,7 @@ export function useGenSpaceGenerationActions({
         effectivePrompt,
         settings,
         submittedImageInputs,
-        promptEnhancementEnabled && !isRegionImage,
+        promptEnhancementEnabled && !isRegionImage && !enhancement.accepted,
         imageMode === "edit" && editImage
           ? {
               image: editImage,
@@ -381,6 +412,7 @@ export function useGenSpaceGenerationActions({
         projectId: currentProjectId,
         submittedAt: Date.now(),
         prompt: effectivePrompt,
+        promptEnhancement: enhancement.accepted ? { originalPrompt: authoredPrompt, effectivePrompt } : undefined,
         imageMode,
         editMask: activeEditMask
           ? {
@@ -443,7 +475,10 @@ export function useGenSpaceGenerationActions({
       return;
     }
     const submittedVideoInputs = compiledVideo
-      ? [...imageInputs, ...stagedEntityInputs]
+      ? [
+          ...imageInputs,
+          ...stagedEntityInputs.map(({ created: _created, ...input }) => input),
+        ]
       : imageInputs;
     const command = buildVideoGenerationCommand({
       prompt: effectivePrompt,
@@ -452,7 +487,7 @@ export function useGenSpaceGenerationActions({
       inputImage,
       inputAudio,
       useAudioTrack,
-      enhancePrompt: promptEnhancementEnabled,
+      enhancePrompt: promptEnhancementEnabled && !enhancement.accepted,
     });
     if (command.persistNormalizedSettings) {
       setSettings(command.normalizedSettings);
@@ -461,10 +496,12 @@ export function useGenSpaceGenerationActions({
       projectId: currentProjectId,
       submittedAt: Date.now(),
       prompt: effectivePrompt,
+      promptEnhancement: enhancement.accepted ? { originalPrompt: authoredPrompt, effectivePrompt } : undefined,
       settings: { ...command.normalizedSettings },
       inputs: submittedVideoInputs.map((input) => ({ ...input })),
       inputImage,
       inputAudio,
+      useAudioTrack: command.useAudioTrack,
       assetPaths: [...projectAssets.map(({ url, path }) => ({ url, path })), ...stagedEntityInputs.map(({ url, path }) => ({ url, path }))],
       composer: compiledVideo ? {
         schemaVersion: 1,
@@ -476,19 +513,42 @@ export function useGenSpaceGenerationActions({
         resolvedDurationSeconds: compiledVideo.durationSeconds ?? command.normalizedSettings.duration,
       } : undefined,
     };
-    await generate(
-      command.prompt,
-      command.imagePath,
-      command.settings,
-      command.audioPath,
-      command.inputMedia,
-      command.useAudioTrack,
-      undefined,
-      undefined,
-      undefined,
-      { kind: "video-output", snapshot },
-    );
+    try {
+      await generate(
+        command.prompt,
+        command.imagePath,
+        command.settings,
+        command.audioPath,
+        command.inputMedia,
+        command.useAudioTrack,
+        undefined,
+        undefined,
+        undefined,
+        { kind: "video-output", snapshot },
+      );
+    } catch (error) {
+      if (!(error instanceof QueueAdmissionRejectedError)) throw error;
+      const createdPaths = stagedEntityInputs
+        .filter((input) => input.created)
+        .map((input) => input.path);
+      if (createdPaths.length > 0) {
+        try {
+          await window.electronAPI.deleteProjectAssetFiles({
+            projectId: currentProjectId,
+            filePaths: createdPaths,
+          });
+        } catch (cleanupError) {
+          console.warn("Could not clean staged reference files after video submission failed.", cleanupError);
+        }
+      }
+      throw error;
+    }
+    } finally {
+      submissionInFlight.current = false;
+    }
   }, [
+    compileDraft,
+    enhancement.accepted,
     currentProjectId,
     composer,
     generate,
@@ -531,5 +591,5 @@ export function useGenSpaceGenerationActions({
     upscaleMethod,
     upscaleScale,
   ]);
-  return { submit };
+  return { submit, enhancement };
 }

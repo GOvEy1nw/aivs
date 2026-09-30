@@ -94,6 +94,7 @@ export type MusicGenerationMetadata =
 
 // Parameters needed to regenerate a shot
 export interface GenerationParams {
+  promptEnhancement?: { originalPrompt: string; effectivePrompt: string }
   mode: 'text-to-video' | 'image-to-video' | 'audio-to-video' | 'text-to-image' | 'text-to-music' | 'text-to-sfx' | 'text-to-speech' | 'retake' | 'reframe' | 'upscale'
   prompt: string
   model: string
@@ -115,12 +116,14 @@ export interface GenerationParams {
   inputImageUrl?: string // For I2V: the input image used
   inputImagePath?: string
   imageInputRole?: string
+  useAudioTrack?: boolean
   imageInputMedia?: {
     url: string
     role: string
     alias?: string
     path?: string
     type?: 'image' | 'video' | 'audio'
+    useAudioTrack?: boolean
     trimStartTime?: number
     trimDuration?: number
     mediaDuration?: number

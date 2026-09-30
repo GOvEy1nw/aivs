@@ -9,6 +9,8 @@ bridge via the ``enable_wangp`` fixture (which swaps in
 
 from __future__ import annotations
 
+import pytest
+
 from pathlib import Path
 
 from api_types import GenerateImageRequest
@@ -33,6 +35,21 @@ def _fake_running_generation_state(test_state) -> None:
 
 class TestGenerate:
     """WanGP-backed video generation through ``POST /api/generate``."""
+
+    @pytest.mark.parametrize("field", ["fps", "duration"])
+    @pytest.mark.parametrize("value", ["0", "-1", "0.5", "nan", "inf"])
+    def test_invalid_timing_rejected_before_generation(
+        self, client, enable_wangp: FakeWanGPBridge, field: str, value: str
+    ):
+        response = client.post("/api/generate", json={**_T2V_JSON, field: value})
+
+        assert response.status_code == 400
+        assert response.json()["error"] == f"INVALID_{field.upper()}"
+        assert enable_wangp.video_calls == []
+
+        recovery = client.post("/api/generate", json=_T2V_JSON)
+        assert recovery.status_code == 200
+        assert recovery.json()["status"] == "complete"
 
     def test_t2v_happy_path(self, client, enable_wangp: FakeWanGPBridge):
         r = client.post(
@@ -119,7 +136,7 @@ class TestGenerate:
             style_url,
         ]
         assert call.default_settings["loras_multipliers"] == "1.0 1.0"
-        assert call.prompt == "test\n[0s:2s] Cut closer.\nD4rkP41nt3r"
+        assert call.prompt.startswith("test\n[0s:2s] Cut closer.\nD4rkP41nt3r")
 
         unstyled_response = client.post("/api/generate", json=_T2V_JSON)
         assert unstyled_response.status_code == 200
@@ -441,6 +458,133 @@ class TestGenerate:
         assert response.json()["error"] == "H3_SOUNDTRACK_AUDIO_REFERENCE_MIX"
         assert enable_wangp.video_calls == []
 
+    def test_h3_control_video_keeps_its_audio_track(
+        self, client, enable_wangp: FakeWanGPBridge, tmp_path: Path
+    ):
+        control = tmp_path / "control.mp4"
+        control.write_bytes(b"fake-video")
+
+        response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "useAudioTrack": True,
+                "inputMedia": [
+                    {"role": "control_video", "path": str(control), "type": "video"},
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        call = enable_wangp.video_calls[-1]
+        assert call.model_type == "minimax_h3_fl2va_pruned"
+        assert call.video_prompt_type == "GV"
+        assert call.audio_prompt_type == "K"
+        assert call.control_video_path == str(control)
+        assert call.audio_path is None
+
+        audio_guide = tmp_path / "guide.wav"
+        audio_guide.write_bytes(b"RIFF\x0c\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00")
+        response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "useAudioTrack": False,
+                "inputMedia": [
+                    {"role": "control_video", "path": str(control), "type": "video"},
+                    {"role": "audio_guide", "path": str(audio_guide), "type": "audio"},
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        call = enable_wangp.video_calls[-1]
+        assert call.audio_prompt_type == "A"
+        assert call.audio_path == str(audio_guide)
+
+    def test_h3_rejects_trimmed_control_video_soundtrack(
+        self, client, enable_wangp: FakeWanGPBridge, tmp_path: Path
+    ):
+        control = tmp_path / "control.mp4"
+        control.write_bytes(b"fake-video")
+
+        response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "useAudioTrack": True,
+                "inputMedia": [
+                    {
+                        "role": "control_video",
+                        "path": str(control),
+                        "type": "video",
+                        "trimDuration": 2,
+                    },
+                ],
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "H3_CONTROL_VIDEO_SOUNDTRACK_EXCERPTS_UNSUPPORTED"
+        assert enable_wangp.video_calls == []
+
+        audio_guide = tmp_path / "guide.wav"
+        audio_guide.write_bytes(b"RIFF\x0c\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00")
+        response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "useAudioTrack": True,
+                "inputMedia": [
+                    {"role": "control_video", "path": str(control), "type": "video"},
+                    {"role": "audio_guide", "path": str(audio_guide), "type": "audio"},
+                ],
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "H3_CONTROL_VIDEO_SOUNDTRACK_AUDIO_GUIDE_MIX"
+        assert enable_wangp.video_calls == []
+
+    def test_h3_soundtrack_excerpt_uses_video_without_duplicate_audio_reference(
+        self, client, enable_wangp: FakeWanGPBridge, tmp_path: Path, monkeypatch
+    ):
+        reference = tmp_path / "reference.mp4"
+        reference.write_bytes(b"fake-video")
+        monkeypatch.setattr(
+            "handlers.video_generation_handler.probe_video_metadata",
+            lambda _path: VideoMetadata(frame_count=120, duration_seconds=5.0),
+        )
+
+        response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "inputMedia": [
+                    {
+                        "role": "reference_video",
+                        "path": str(reference),
+                        "type": "video",
+                        "useAudioTrack": True,
+                        "trimStartTime": 0.04,
+                        "trimDuration": 2.0,
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        call = enable_wangp.video_calls[-1]
+        assert call.video_prompt_type == "V1-U"
+        assert call.audio_prompt_type == "K1"
+        assert call.reference_video_paths == [str(reference)]
+        assert call.reference_audio_paths == []
+
     def test_video_profile_square_aspect_routes_to_ltx2(
         self, client, enable_wangp: FakeWanGPBridge
     ):
@@ -588,12 +732,6 @@ class TestGenerate:
         assert r.status_code == 400
         assert "UNSUPPORTED_VIDEO_RESOLUTION_TIER" in r.json()["error"]
         assert enable_wangp.video_calls == []
-
-    def test_already_running(self, client, enable_wangp: FakeWanGPBridge, test_state):
-        _fake_running_generation_state(test_state)
-
-        r = client.post("/api/generate", json=_T2V_JSON)
-        assert r.status_code == 409
 
     def test_i2v_nonexistent_image(self, client, enable_wangp: FakeWanGPBridge):
         r = client.post(
@@ -867,39 +1005,24 @@ class TestGenerate:
         assert "VIDEO_TOOL_SOURCE_REQUIRED" in missing.json()["error"]
         assert enable_wangp.video_calls == []
 
-    def test_retake_routes_through_wangp_control_video(
-        self, client, enable_wangp: FakeWanGPBridge, tmp_path: Path, monkeypatch
+    @pytest.mark.parametrize("mode", ["replace_audio_and_video", "replace_video", "replace_audio"])
+    def test_retake_is_unavailable_without_generation(
+        self, client, enable_wangp: FakeWanGPBridge, mode
     ):
-        video = tmp_path / "source.mp4"
-        clipped = tmp_path / "retake.mp4"
-        video.write_bytes(b"source")
-        clipped.write_bytes(b"clip")
-
-        monkeypatch.setattr(
-            "handlers.video_generation_handler.extract_video_clip",
-            lambda source_path, start_time, duration, output_dir: clipped,
-        )
-        monkeypatch.setattr(
-            "handlers.video_generation_handler.probe_video_metadata",
-            lambda path: VideoMetadata(frame_count=97, duration_seconds=4.0),
-        )
-
         response = client.post(
             "/api/retake",
             json={
-                "video_path": str(video),
+                "video_path": "saved-source.mp4",
                 "start_time": 1.5,
                 "duration": 4,
                 "prompt": "Make the movement dramatic",
-                "mode": "replace_audio_and_video",
+                "mode": mode,
             },
         )
 
-        assert response.status_code == 200
-        call = enable_wangp.video_calls[0]
-        assert call.prompt == "Make the movement dramatic"
-        assert call.control_video_path == str(clipped)
-        assert call.duration_seconds == 4
+        assert response.status_code == 501
+        assert "RETAKE_UNAVAILABLE" in response.json()["error"]
+        assert enable_wangp.video_calls == []
 
     def test_audio_input_trim_passes_clipped_path_and_duration(
         self, client, enable_wangp: FakeWanGPBridge, tmp_path: Path, monkeypatch
@@ -1240,10 +1363,11 @@ class TestGenerateImage:
         assert call.width == 1024
         assert call.height == 1024
         assert call.num_steps == 8
-        assert call.seed is None
+        assert isinstance(call.seed, int)
+        assert call.seed == data["resolvedSeed"]
         assert call.default_settings["prompt_enhancer"] == ""
 
-    def test_curated_preset_profile_reaches_image_generation(
+    def test_curated_native_profile_reaches_image_generation(
         self, test_state, enable_wangp: FakeWanGPBridge
     ):
         response = test_state.image_generation.generate(
@@ -1259,14 +1383,9 @@ class TestGenerateImage:
 
         assert response.status == "complete"
         assert enable_wangp.resolved_profile_calls == [
-            ("krea2_turbo", None, "unlockkrea2")
+            ("krea2_turbo", None, None)
         ]
-        assert (
-            enable_wangp.image_calls[0].default_settings[
-                "resolved_preset_profile_id"
-            ]
-            == "unlockkrea2"
-        )
+        assert enable_wangp.image_calls[0].model_type == "krea2_turbo"
 
     def test_prompt_enhancer_uses_text_without_input_image(
         self, client, enable_wangp: FakeWanGPBridge

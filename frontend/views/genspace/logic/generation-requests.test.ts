@@ -13,7 +13,13 @@ import {
 
 const musicProfile = {
   id: "ace",
-  music: { autoDurationFallbackSeconds: 60 },
+  music: {
+    autoDurationFallbackSeconds: 60,
+    supportsCover: true,
+    supportsReferenceTimbre: true,
+    supportsCustomLyrics: true,
+  },
+  wangpMetadata: { settingValues: {} },
 } as ModelProfile;
 
 describe("GenSpace generation request builders", () => {

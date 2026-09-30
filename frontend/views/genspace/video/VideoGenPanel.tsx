@@ -614,6 +614,7 @@ export function VideoGenPanel({
       ) : null}
       {!isUpscale ? (
         <PromptEditor
+          enhancementReview={prompt.enhancementReview}
           value={prompt.value}
           onChange={prompt.setValue}
           mediaMentions={
@@ -693,6 +694,7 @@ export function VideoGenPanel({
                   disabled={generation.isRunning}
                   prompt={prompt.value}
                   onEnhance={prompt.enhance}
+                  onEnhanceDraft={prompt.enhanceDraft}
                   enhanceEnabled={prompt.enhanceEnabled}
                   isEnhancing={prompt.isEnhancing}
                 />

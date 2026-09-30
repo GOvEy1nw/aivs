@@ -16,6 +16,7 @@ import type {
   VideoSequenceScene,
   VideoSequenceShot,
 } from "../../../types/video-composer";
+import type { ReferenceEntity } from "../../../../shared/reference-library";
 import {
   PresetPromptPicker,
   type PresetPromptGroup,
@@ -156,6 +157,10 @@ type Composer = {
     shotId: string,
     patch: Partial<VideoSequenceShot>,
   ) => void;
+  selectLocation: (
+    sceneId: string,
+    location: Extract<ReferenceEntity, { kind: "location" }>,
+  ) => void;
   addScene: () => void;
   addShot: (sceneId: string) => void;
   removeScene: (id: string) => void;
@@ -252,15 +257,13 @@ export function SequenceComposer({
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [reorderMode, setReorderMode] = useState(false);
   const [dragged, setDragged] = useState<Dragged | null>(null);
+  const savedLocations = entities.filter(
+    (entity): entity is Extract<ReferenceEntity, { kind: "location" }> =>
+      entity.kind === "location",
+  );
   const locationGroups: readonly PresetPromptGroup[] = [
-    {
-      label: "Saved locations",
-      options: entities
-        .filter((entity) => entity.kind === "location")
-        .map((entity) => entity.name),
-    },
     { label: "Locations", options: locationPresets },
-  ].filter((group) => group.options.length > 0);
+  ];
   const shots = composer.value.sequence.scenes.flatMap((scene) => scene.shots);
   const total = resolvedDuration(shots);
   const approximate = hasAutoDuration(shots);
@@ -431,13 +434,13 @@ export function SequenceComposer({
                       placeholder={fieldLabel(field)}
                       value={scene[field]}
                       onChange={(event) =>
-                        composer.updateScene(scene.id, {
-                          [field]: event.target.value,
-                        })
+                        composer.updateScene(scene.id, field === "location"
+                          ? { location: event.target.value, locationEntityId: undefined }
+                          : { [field]: event.target.value })
                       }
                       className="min-w-0 flex-1 rounded bg-input px-2 py-1.5 text-xs focus:outline-hidden"
                     />
-                    <PresetPromptPicker
+                      <PresetPromptPicker
                       label={fieldLabel(field)}
                       groups={
                         field === "location"
@@ -446,9 +449,30 @@ export function SequenceComposer({
                       }
                       value={scene[field]}
                       onChange={(value) =>
-                        composer.updateScene(scene.id, { [field]: value })
+                        composer.updateScene(scene.id, field === "location"
+                          ? { location: value, locationEntityId: undefined }
+                          : { [field]: value })
                       }
                     />
+                    {field === "location" && savedLocations.length > 0 ? (
+                      <SettingsDropdown
+                        title="Saved locations"
+                        placement="bottom"
+                        triggerLabel="Saved location"
+                        trigger="Saved"
+                        options={savedLocations.map((location) => ({
+                          value: location.id,
+                          label: location.name,
+                        }))}
+                        value={scene.locationEntityId ?? ""}
+                        onChange={(locationId) => {
+                          const location = savedLocations.find(
+                            (item) => item.id === locationId,
+                          );
+                          if (location) composer.selectLocation(scene.id, location);
+                        }}
+                      />
+                    ) : null}
                   </div>
                 ))}
               </div>

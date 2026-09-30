@@ -119,8 +119,8 @@ def test_cancellation_during_conditioning_skips_inference_and_cleans_derivative(
 
     response = client.post("/api/generate-sfx", json=_request())
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "cancelled"
+    assert response.status_code == 409
+    assert "GENERATION_CANCELLED" in response.json()["error"]
     assert enable_wangp.sfx_calls == []
     assert created and not created[0].exists()
 
@@ -139,12 +139,8 @@ def test_cancellation_removes_generated_audio_and_conditioning_video(
 
     response = client.post("/api/generate-sfx", json=_request())
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "cancelled",
-        "audio_path": None,
-        "resolvedSeed": None,
-    }
+    assert response.status_code == 409
+    assert "GENERATION_CANCELLED" in response.json()["error"]
     assert list(test_state.config.outputs_dir.glob("mmaudio_sfx_*.wav")) == []
     assert not Path(enable_wangp.sfx_calls[0].video_path).exists()
 

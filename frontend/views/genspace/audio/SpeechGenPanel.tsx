@@ -2,7 +2,7 @@ import { AudioLines, Plus, Trash2 } from "lucide-react";
 import { useRef, useState, type DragEvent } from "react";
 import { fileUrlToPath } from "../../../lib/url-to-path";
 import type { ModelProfile } from "../../../types/model-profiles";
-import type { SpeechReferenceAudio } from "../../../types/speech";
+import type { SpeechReferenceAudio, SpeechSegment } from "../../../types/speech";
 import { GenPanelSection } from "../components/GenPanelSection";
 import { GenerateButton } from "../components/GenerateButton";
 import { MediaInputSlot } from "../components/MediaInputSlot";
@@ -24,18 +24,20 @@ export function SpeechGenPanel({
   const inputRefs = [
     useRef<HTMLInputElement>(null),
     useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
   ];
   const [dragActive, setDragActive] = useState<number | null>(null);
   const [activeReference, setActiveReference] = useState<number | null>(null);
   const [editingReference, setEditingReference] = useState<number | null>(null);
   const referenceRequired = selectedProfile?.speech.referenceRequired ?? false;
+  const maxReferences = Math.min(selectedProfile?.speech.maxReferenceInputs ?? 0, 3);
   const references = controller.settings.references;
-  const dialogue = references.length === 2;
+  const dialogue = references.length >= 2;
   const dialogueText = controller.settings.segments
     .filter(({ text }) => text.trim())
     .map(({ speaker, text }) => `Speaker ${speaker}: ${text.trim()}`)
     .join("\n");
-  const hasBothSpeakers = [1, 2].every((speaker) =>
+  const hasAllSpeakers = Array.from({ length: references.length }, (_, index) => index + 1).every((speaker) =>
     controller.settings.segments.some(
       (segment) => segment.speaker === speaker && segment.text.trim(),
     ),
@@ -43,7 +45,7 @@ export function SpeechGenPanel({
   const canSubmit =
     Boolean(selectedProfile) &&
     (dialogue
-      ? hasBothSpeakers && dialogueText.length <= MAX_SPEECH_TEXT_LENGTH
+      ? hasAllSpeakers && dialogueText.length <= MAX_SPEECH_TEXT_LENGTH
       : Boolean(controller.prompt.value.trim()) &&
         (!referenceRequired || references.length > 0));
 
@@ -61,7 +63,9 @@ export function SpeechGenPanel({
               { speaker: 1, text: controller.prompt.value },
               { speaker: 2, text: "" },
             ]
-          : controller.settings.segments,
+          : next.length === 3 && !controller.settings.segments.some(({ speaker }) => speaker === 3)
+            ? [...controller.settings.segments, { speaker: 3, text: "" }]
+            : controller.settings.segments,
     });
   };
 
@@ -133,7 +137,16 @@ export function SpeechGenPanel({
     controller.setSettings({
       ...controller.settings,
       references: next,
-      segments: next.length < 2 ? [] : controller.settings.segments,
+      segments:
+        next.length < 2
+          ? []
+          : controller.settings.segments
+              .filter(({ speaker }) => speaker !== index + 1)
+              .map((segment) =>
+                segment.speaker > index + 1
+                  ? { ...segment, speaker: (segment.speaker - 1) as SpeechSegment["speaker"] }
+                  : segment,
+              ),
     });
   };
 
@@ -160,7 +173,7 @@ export function SpeechGenPanel({
 
   const updateSegment = (
     index: number,
-    patch: Partial<{ speaker: 1 | 2; text: string }>,
+    patch: Partial<SpeechSegment>,
   ) =>
     controller.setSettings({
       ...controller.settings,
@@ -193,7 +206,7 @@ export function SpeechGenPanel({
 
   return (
     <>
-      <GenPanelSection title={`References (${references.length}/2)`} collapsible={false}>
+      <GenPanelSection title={`References (${references.length}/${maxReferences})`} collapsible={false}>
         {editingItem ? (
           <GuideMediaTrimEditor
             item={{
@@ -263,7 +276,7 @@ export function SpeechGenPanel({
               </div>
             );
           })}
-          {references.length < 2 ? (
+          {references.length < maxReferences ? (
             <div
               className="relative"
               onDragEnter={() => setDragActive(references.length)}
@@ -273,19 +286,19 @@ export function SpeechGenPanel({
                 kind="audio"
                 label={
                   references.length
-                    ? "Speaker 2"
+                    ? `Speaker ${references.length + 1}`
                     : referenceRequired
                       ? "Required"
                       : "Optional"
                 }
                 title={
                   references.length
-                    ? "Add second voice reference"
+                    ? `Add voice reference ${references.length + 1}`
                     : "Add voice reference"
                 }
                 ariaLabel={
                   references.length
-                    ? "Add second voice reference"
+                    ? `Add voice reference ${references.length + 1}`
                     : "Add voice reference"
                 }
                 dragActive={dragActive === references.length}
@@ -321,13 +334,14 @@ export function SpeechGenPanel({
                   disabled={controller.isRunning}
                   onChange={(event) =>
                     updateSegment(index, {
-                      speaker: Number(event.target.value) as 1 | 2,
+                      speaker: Number(event.target.value) as SpeechSegment["speaker"],
                     })
                   }
                   className="h-9 rounded-full border border-border bg-input px-3 text-xs text-foreground"
                 >
                   <option value={1}>Speaker 1</option>
                   <option value={2}>Speaker 2</option>
+                  {references.length === 3 ? <option value={3}>Speaker 3</option> : null}
                 </select>
                 <textarea
                   aria-label={`Segment ${index + 1} text`}
@@ -369,12 +383,12 @@ export function SpeechGenPanel({
                   const last =
                     controller.settings.segments[
                       controller.settings.segments.length - 1
-                    ]?.speaker ?? 2;
+                      ]?.speaker ?? Math.min(references.length, 2) as SpeechSegment["speaker"];
                   controller.setSettings({
                     ...controller.settings,
                     segments: [
                       ...controller.settings.segments,
-                      { speaker: last === 1 ? 2 : 1, text: "" },
+                      { speaker: (last % references.length + 1) as SpeechSegment["speaker"], text: "" },
                     ],
                   });
                 }}

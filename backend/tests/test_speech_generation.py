@@ -22,9 +22,9 @@ def test_speech_profiles_are_curated_and_expose_reference_requirements(client) -
     assert set(profiles).issuperset({"omnivoice", "index_tts2"})
     assert profiles["omnivoice"]["speech"]["requiredPackIds"] == ["omnivoice"]
     assert profiles["omnivoice"]["speech"]["referenceRequired"] is False
-    assert profiles["omnivoice"]["speech"]["maxReferenceInputs"] == 2
+    assert profiles["omnivoice"]["speech"]["maxReferenceInputs"] == 3
     assert profiles["index_tts2"]["speech"]["referenceRequired"] is True
-    assert profiles["index_tts2"]["speech"]["maxReferenceInputs"] == 2
+    assert profiles["index_tts2"]["speech"]["maxReferenceInputs"] == 3
     assert profiles["index_tts2"]["license"]["commercialUse"] == "restricted"
     assert profiles["index_tts2"]["displayName"] == "Index TTS 2.5"
 
@@ -85,7 +85,7 @@ def test_curated_preset_profile_reaches_speech_generation(
     )
 
 
-def test_speech_dialogue_requires_both_speakers_and_preserves_references(client, enable_wangp, tmp_path: Path) -> None:
+def test_speech_dialogue_requires_all_speakers_and_preserves_references(client, enable_wangp, tmp_path: Path) -> None:
     references = []
     for name in ("one.wav", "two.wav"):
         reference = tmp_path / name
@@ -99,6 +99,21 @@ def test_speech_dialogue_requires_both_speakers_and_preserves_references(client,
     call = enable_wangp.speech_calls[-1]
     assert call.reference_audio_paths == [str(tmp_path / "one.wav"), str(tmp_path / "two.wav")]
     assert call.enhance_prompt is True
+
+    third = tmp_path / "three.wav"
+    with wave.open(str(third), "wb") as output:
+        output.setnchannels(1); output.setsampwidth(2); output.setframerate(8_000); output.writeframes(b"\x00\x00" * 800)
+    three_reference_response = client.post(
+        "/api/generate-speech",
+        json=request(
+            references=[*references, {"path": str(third)}],
+            text="Speaker 1: Hello\nSpeaker 2: Hi\nSpeaker 3: Welcome",
+        ),
+    )
+    assert three_reference_response.status_code == 200
+    assert enable_wangp.speech_calls[-1].reference_audio_paths == [
+        str(tmp_path / "one.wav"), str(tmp_path / "two.wav"), str(third),
+    ]
 
 
 def test_speech_reference_trim_is_materialized_and_cleaned_up(

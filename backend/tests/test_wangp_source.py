@@ -42,6 +42,11 @@ def test_stage_wangp_preserves_native_assets_without_finetunes_or_downloaded_wei
     (source / "wgp.py").write_text("", encoding="utf-8")
     (source / "shared" / "api.py").write_text("", encoding="utf-8")
     (source / "requirements.txt").write_text("", encoding="utf-8")
+    (source / "LICENSE.txt").write_text("runtime licence", encoding="utf-8")
+    (source / "THIRD_PARTY_NOTICES.md").write_text("runtime notices", encoding="utf-8")
+    component = source / "postprocessing" / "mmaudio" / "ext" / "bigvgan" / "incl_licenses"
+    component.mkdir(parents=True)
+    (component / "LICENSE_1").write_text("component licence", encoding="utf-8")
     (source / "models" / "native.bin").write_bytes(b"native asset")
     (source / "models" / "downloaded.safetensors").write_bytes(b"weight")
     (source / "finetunes" / "custom.json").write_text("{}", encoding="utf-8")
@@ -62,6 +67,9 @@ def test_stage_wangp_preserves_native_assets_without_finetunes_or_downloaded_wei
         assert marker["schemaVersion"] == 1
         assert len(marker["contentHash"]) == 64
         assert (destination / "models" / "native.bin").read_bytes() == b"native asset"
+        assert (destination / "LICENSE.txt").read_text(encoding="utf-8") == "runtime licence"
+        assert (destination / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8") == "runtime notices"
+        assert (destination / component.relative_to(source) / "LICENSE_1").read_text(encoding="utf-8") == "component licence"
         assert not (destination / "models" / "downloaded.safetensors").exists()
         assert list((destination / "finetunes").iterdir()) == []
     finally:

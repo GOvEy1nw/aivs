@@ -10,6 +10,7 @@ from typing import Any, Iterator, TypeVar, cast
 from uuid import uuid4
 
 from _routes._errors import HTTPError
+from handlers.retake_handler import RETAKE_UNAVAILABLE
 from pydantic import BaseModel
 from services.generation_queue_executor import GenerationJobExecutor
 from services.generation_queue_store import GenerationQueueStore
@@ -60,6 +61,11 @@ class GenerationQueueHandler:
         changed = False
         with self._lock:
             for job in self._state.jobs.values():
+                if job.kind == "video.retake" and job.status == "queued":
+                    job.status = "failed"
+                    job.finished_at = _now()
+                    job.error = RETAKE_UNAVAILABLE
+                    changed = True
                 if job.status in {"running", "cancel_requested"}:
                     job.status = "interrupted"
                     job.finished_at = _now()
@@ -134,6 +140,8 @@ class GenerationQueueHandler:
             self._condition.notify_all()
 
     def submit(self, *, kind: str, payload: dict[str, Any], client_request_id: str, summary: dict[str, Any], client_context: dict[str, Any], requires_acknowledgement: bool = True) -> dict[str, Any]:
+        if kind == "video.retake":
+            raise HTTPError(501, RETAKE_UNAVAILABLE)
         canonical = {"kind": kind, "payload": payload, "summary": summary, "clientContext": client_context}
         def mutate() -> dict[str, Any]:
             if not self._accepting:
@@ -334,7 +342,8 @@ class GenerationQueueHandler:
             return response_type.model_validate(job.result["response"])
         if job.status == "cancelled":
             raise HTTPError(409, "GENERATION_CANCELLED: Generation was cancelled.")
-        raise HTTPError(500, job.error or "GENERATION_FAILED: Generation did not complete.")
+        status_code = (job.result or {}).get("errorStatusCode", 500)
+        raise HTTPError(status_code, job.error or "GENERATION_FAILED: Generation did not complete.")
 
     def wait_for_terminal(self, job_id: str, timeout_seconds: float = 3600) -> GenerationQueueJob:
         deadline = __import__("time").monotonic() + timeout_seconds
@@ -383,7 +392,7 @@ class GenerationQueueHandler:
                 self._finish(job.id, result=result)
             except HTTPError as exc:
                 try:
-                    self._finish(job.id if job is not None else "", error=exc.detail)
+                    self._finish(job.id if job is not None else "", error=exc.detail, result={"errorStatusCode": exc.status_code})
                 except HTTPError:
                     return
             except Exception as exc:
@@ -411,7 +420,7 @@ class GenerationQueueHandler:
             if job.status == "cancel_requested":
                 job.status = "cancelled"
             elif error is not None:
-                job.status, job.error = "failed", error
+                job.status, job.error, job.result = "failed", error, result
             else:
                 job.status, job.result = "completed", result
             job.finished_at = _now()

@@ -43,7 +43,7 @@ export function transitionGenSpaceMode(
 
 export function transitionVideoProcessMode(
   nextMode: VideoProcessMode,
-): { mode: VideoProcessMode; clearPrompt: boolean } | null {
+): { mode: VideoProcessMode } | null {
   if (nextMode === "retake") return null;
-  return { mode: nextMode, clearPrompt: nextMode === "reframe" };
+  return { mode: nextMode };
 }

@@ -8,10 +8,11 @@ export function PromptActions({
   disabled,
   prompt,
   onEnhance,
+  onEnhanceDraft,
   isEnhancing,
   showEnhance = true,
   enhanceEnabled,
-  enhanceTitle = "Enhance prompt",
+  enhanceTitle = "Automatically enhance when generating",
 }: {
   seedLocked: boolean;
   lockedSeed: number;
@@ -19,6 +20,7 @@ export function PromptActions({
   disabled: boolean;
   prompt: string;
   onEnhance?: () => void;
+  onEnhanceDraft?: () => void;
   isEnhancing?: boolean;
   showEnhance?: boolean;
   enhanceEnabled?: boolean;
@@ -26,6 +28,7 @@ export function PromptActions({
 }) {
   return (
     <div className="flex items-center gap-2">
+      {showEnhance && onEnhanceDraft ? <button type="button" onClick={onEnhanceDraft} disabled={disabled || isEnhancing} className="rounded-xl bg-surface-raised px-3 py-2 text-xs text-muted-foreground hover:bg-surface-hover disabled:opacity-40">{isEnhancing ? "Enhancing…" : "Enhance draft"}</button> : null}
       {showEnhance && onEnhance ? (
         <button
           type="button"
@@ -42,6 +45,7 @@ export function PromptActions({
               : "bg-surface-raised text-muted-foreground hover:bg-surface-hover hover:text-foreground disabled:hover:text-muted-foreground"
           }`}
           title={enhanceTitle}
+          aria-label={enhanceTitle}
         >
           {isEnhancing ? (
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" />

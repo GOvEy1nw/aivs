@@ -62,7 +62,9 @@ if (
 Remove-Item Env:COREPACK_ROOT -ErrorAction SilentlyContinue
 if ($Unpack) {
     Write-Host "Packaging unpacked app (fast mode)..." -ForegroundColor Yellow
-    & $ElectronBuilder --win --dir
+    # Reuse the installed runtime instead of downloading and extracting Electron again.
+    $ElectronDist = Join-Path $ProjectDir "node_modules\electron\dist"
+    & $ElectronBuilder --win --dir "--config.electronDist=$ElectronDist"
 } else {
     Write-Host "Packaging installer..." -ForegroundColor Yellow
     $PublishArgs = @()

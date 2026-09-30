@@ -28,6 +28,7 @@ import type { AudioSubMode } from "../types";
 import type { SfxSettings } from "../../../types/sfx";
 import type { SpeechSettings } from "../../../types/speech";
 import type { VideoComposerStateV1 } from "../../../types/video-composer";
+import type { AppliedPromptEnhancement } from "./usePromptEnhancement";
 import {
   parseRegionPrompt,
   type RegionPromptState,
@@ -42,7 +43,7 @@ export function useGenSpaceSettingsRestore({
   setMode,
   setImageMode,
   setVideoMode,
-  setPrompt,
+  setPromptForMode,
   setRegionPrompt,
   setSettings,
   setMusicSettings,
@@ -50,6 +51,7 @@ export function useGenSpaceSettingsRestore({
   setSfxSettings,
   setSpeechSettings,
   setPromptEnhancementEnabled,
+  restorePromptEnhancement,
   setInputs,
   setEditImage,
   setEditToolMode,
@@ -57,6 +59,7 @@ export function useGenSpaceSettingsRestore({
   setEditOutpaint,
   setInputImage,
   setInputAudio,
+  setUseAudioTrack,
   setReframeSource,
   setVideoTool,
   setVideoToolInput,
@@ -72,7 +75,11 @@ export function useGenSpaceSettingsRestore({
   setMode: (mode: GenSpaceMode) => void;
   setImageMode: (mode: ImageProcessMode) => void;
   setVideoMode: (mode: VideoProcessMode) => void;
-  setPrompt: (prompt: string) => void;
+  setPromptForMode: (
+    mode: GenSpaceMode,
+    prompt: string,
+    audioSubmode?: AudioSubMode,
+  ) => void;
   setRegionPrompt: (value: RegionPromptState) => void;
   setSettings: Dispatch<SetStateAction<GenSpaceSettings>>;
   setMusicSettings: Dispatch<SetStateAction<MusicSettings>>;
@@ -80,6 +87,7 @@ export function useGenSpaceSettingsRestore({
   setSfxSettings: Dispatch<SetStateAction<SfxSettings>>;
   setSpeechSettings: Dispatch<SetStateAction<SpeechSettings>>;
   setPromptEnhancementEnabled: (enabled: boolean) => void;
+  restorePromptEnhancement?: (value: AppliedPromptEnhancement | null) => void;
   setInputs: Dispatch<SetStateAction<GenSpaceMediaInput[]>>;
   setEditImage: (image: GenSpaceMediaInput | null) => void;
   setEditToolMode: (mode: ImageEditToolMode) => void;
@@ -87,6 +95,7 @@ export function useGenSpaceSettingsRestore({
   setEditOutpaint: (outpaint: ImageEditOutpaintRecipe | null) => void;
   setInputImage: (url: string | null) => void;
   setInputAudio: (url: string | null) => void;
+  setUseAudioTrack: (value: boolean) => void;
   setReframeSource: (source: {
     videoUrl: string;
     videoPath: string;
@@ -107,6 +116,7 @@ export function useGenSpaceSettingsRestore({
     inputAudio: string | null;
     upscaleSource?: GenSpaceMediaInput | null;
     mode: GenSpaceMode;
+    enhancement?: AppliedPromptEnhancement;
   } | null>(null);
   const [version, setVersion] = useState(0);
 
@@ -120,22 +130,30 @@ export function useGenSpaceSettingsRestore({
       );
       if (!plan) return;
       clearError();
-      pendingMedia.current = { ...plan.media, mode: plan.mode };
+      pendingMedia.current = { ...plan.media, mode: plan.mode, enhancement: asset.generationParams?.promptEnhancement };
       setInputs([]);
       setVideoToolInput(null);
       setEditImage(null);
       setInputImage(null);
       setInputAudio(null);
+      setUseAudioTrack(asset.generationParams?.useAudioTrack === true);
       setMode(plan.mode);
       if (plan.mode === "image") {
         setImageMode(plan.imageMode);
         if (plan.imageMode === "region") {
           setRegionPrompt(parseRegionPrompt(plan.prompt));
         } else {
-          setPrompt(plan.prompt);
+          setPromptForMode(
+            "image",
+            asset.generationParams?.promptEnhancement?.originalPrompt ?? plan.prompt,
+          );
         }
       } else {
-        setPrompt(asset.generationParams?.videoComposer?.authoredBrief ?? plan.prompt);
+        setPromptForMode(
+          plan.mode,
+          asset.generationParams?.videoComposer?.authoredBrief ?? asset.generationParams?.promptEnhancement?.originalPrompt ?? plan.prompt,
+          plan.speechSettings ? "speech" : plan.sfxSettings ? "sfx" : "music",
+        );
       }
       setVideoMode(plan.videoMode);
       setVideoTool(plan.videoTool);
@@ -158,6 +176,7 @@ export function useGenSpaceSettingsRestore({
       setEditMask(plan.editMask);
       setEditOutpaint(plan.editOutpaint);
       setSettings(plan.settings);
+      if (asset.generationParams?.promptEnhancement) setPromptEnhancementEnabled(false);
       if (plan.musicSettings) setMusicSettings(plan.musicSettings);
       if (plan.sfxSettings) {
         setAudioSubmode("sfx");
@@ -179,6 +198,7 @@ export function useGenSpaceSettingsRestore({
       clearError,
       musicSettings,
       setInputAudio,
+      setUseAudioTrack,
       setInputImage,
       setInputs,
       setEditImage,
@@ -192,7 +212,7 @@ export function useGenSpaceSettingsRestore({
       setSfxSettings,
       setSpeechSettings,
       setPromptEnhancementEnabled,
-      setPrompt,
+      setPromptForMode,
       setRegionPrompt,
       setReframeSource,
       setSettings,
@@ -215,6 +235,7 @@ export function useGenSpaceSettingsRestore({
       pending.inputAudio;
     if (!hasMedia) {
       pendingMedia.current = null;
+      restorePromptEnhancement?.(pending.enhancement ?? null);
       return;
     }
     if (pending.mode === "image" && imageProfiles.length === 0) return;
@@ -228,6 +249,7 @@ export function useGenSpaceSettingsRestore({
     );
     setInputImage(pending.inputImage);
     setInputAudio(pending.inputAudio);
+    restorePromptEnhancement?.(pending.enhancement ?? null);
   }, [
     imageProfiles.length,
     setInputAudio,
@@ -236,6 +258,7 @@ export function useGenSpaceSettingsRestore({
     setEditImage,
     version,
     videoProfiles.length,
+    restorePromptEnhancement,
   ]);
 
   return restore;

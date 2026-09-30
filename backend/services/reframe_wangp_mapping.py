@@ -81,13 +81,6 @@ def map_reframe_to_wangp(
     else:
         output_aspect = "16:9" if video_width >= video_height else "9:16"
 
-    if not _has_padding(padding):
-        return WanGPOutpaintParams(
-            video_guide_outpainting="" if not _has_padding(padding) else _format_padding(padding),
-            video_guide_outpainting_ratio="",
-            output_aspect_ratio=output_aspect,
-        )
-
     return WanGPOutpaintParams(
         video_guide_outpainting="" if not _has_padding(padding) else _format_padding(padding),
         video_guide_outpainting_ratio="",

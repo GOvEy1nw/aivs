@@ -189,6 +189,8 @@ export function VideoMediaInputs({
         inputs={inputs}
         onChange={onChange}
         reservedAliases={reservedAliases}
+        useAudioTrack={useAudioTrack}
+        onUseAudioTrackChange={onUseAudioTrackChange}
         resolveInputFileUrl={resolveInputFileUrl}
         syncInputFileToGallery={syncInputFileToGallery}
         onReferenceRequestReady={onReferenceRequestReady}
@@ -473,8 +475,8 @@ const H3_REFERENCE_TYPES: Array<{
   label: string;
 }> = [
   { type: "image", role: "reference_image", limit: 9, label: "Image Ref" },
-  { type: "video", role: "reference_video", limit: 2, label: "Video Ref" },
-  { type: "audio", role: "reference_audio", limit: 2, label: "Audio Ref" },
+  { type: "video", role: "reference_video", limit: 3, label: "Video Ref" },
+  { type: "audio", role: "reference_audio", limit: 3, label: "Audio Ref" },
 ];
 const H3_REFERENCE_ROLE_FOR_TYPE: Record<GenSpaceMediaKind, string> = {
   image: "reference_image",
@@ -486,6 +488,8 @@ function H3MediaInputs({
   inputs,
   onChange,
   reservedAliases,
+  useAudioTrack,
+  onUseAudioTrackChange,
   resolveInputFileUrl,
   syncInputFileToGallery,
   onReferenceRequestReady,
@@ -494,6 +498,8 @@ function H3MediaInputs({
   inputs: GenSpaceMediaInput[];
   onChange: Dispatch<SetStateAction<GenSpaceMediaInput[]>>;
   reservedAliases: readonly string[];
+  useAudioTrack: boolean;
+  onUseAudioTrackChange: (value: boolean) => void;
   resolveInputFileUrl: (
     file: File,
     sync?: (file: File) => Promise<string | null>,
@@ -508,6 +514,7 @@ function H3MediaInputs({
   const videoInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const referenceInputRef = useRef<HTMLInputElement>(null);
+  const controlVideoInputRef = useRef<HTMLInputElement>(null);
   const [pendingRole, setPendingRole] = useState<string>("start_image");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -518,12 +525,14 @@ function H3MediaInputs({
       input.role === "depth",
   );
   const referenceState = getH3ReferenceState(inputs);
+  const controlVideo = inputs.find((input) => input.role === "control_video");
   const referenceAvailability = referenceState.availability;
   const renderedRoles = new Set([
     "start_image",
     "end_image",
     ...H3_REFERENCE_TYPES.map(({ role }) => role),
     "depth",
+    "control_video",
   ]);
   const restoredInputs = inputs.filter(({ role }) => !renderedRoles.has(role));
 
@@ -539,6 +548,7 @@ function H3MediaInputs({
         );
         if (
           (reference && !getH3ReferenceAvailability(current)[type]) ||
+          (role === "control_video" && current.some((input) => input.role === "control_video")) ||
           (!reference && currentHasReferences)
         ) {
           return current;
@@ -556,7 +566,7 @@ function H3MediaInputs({
           ? replaceInputForRole(current, next)
           : [...current, next];
       });
-      if (reference && type !== "image") setEditingId(id);
+      if (reference && type === "video") setEditingId(id);
     },
     [onChange, reservedAliases],
   );
@@ -564,7 +574,7 @@ function H3MediaInputs({
   const addFile = async (file: File, role: string) => {
     const type = detectMediaType(file.name, file.type);
     const reference = H3_REFERENCE_TYPES.find((entry) => entry.role === role);
-    const expected = reference?.type ?? "image";
+    const expected = reference?.type ?? (role === "control_video" ? "video" : "image");
     if (!type || type !== expected) return;
     const url = await resolveInputFileUrl(file, syncInputFileToGallery);
     if (url) add(url, type, role);
@@ -655,8 +665,8 @@ function H3MediaInputs({
         <span>References</span>
         <span className="normal-case tracking-normal">
           <span title="Images">▧ {referenceState.imageCount}/9</span>{" "}
-          <span title="Videos">▣ {referenceState.videoCount}/2</span>{" "}
-          <span title="Audio">♫ {referenceState.audioCount}/2</span>{" "}
+          <span title="Videos">▣ {referenceState.videoCount}/3</span>{" "}
+          <span title="Audio">♫ {referenceState.audioCount}/3</span>{" "}
           <span title="Total files">◈ {referenceState.totalCount}/12</span>
         </span>
       </div>
@@ -723,6 +733,61 @@ function H3MediaInputs({
           })}
         </div>
         <div className="flex gap-2">
+          <CroppableMediaInputSlot
+            item={controlVideo}
+            kind="video"
+            label="Control video"
+            badge={controlVideo ? "Control Video" : undefined}
+            title={
+              hasReferences && !controlVideo
+                ? "Remove reference media before adding a control video"
+                : "Use a whole video to control generation"
+            }
+            disabled={!controlVideo && hasReferences}
+            sizeClassName="h-14 w-16"
+            active={activeId === "control_video"}
+            inputRef={controlVideoInputRef}
+            onAdd={() => setPendingRole("control_video")}
+            onToggle={() =>
+              setActiveId((current) =>
+                current === "control_video" ? null : "control_video",
+              )
+            }
+            onRemove={() =>
+              controlVideo &&
+              onChange((current) => removeMediaInput(current, controlVideo.id))
+            }
+            removeLabel="control video"
+            onDrop={dropFor("control_video", "video")}
+            onCropChange={(crop) =>
+              controlVideo && update(controlVideo.id, { crop: crop ?? undefined })
+            }
+            menu={
+              controlVideo ? (
+                <MediaRoleMenu
+                  title="Control Video"
+                  selectedRole={controlVideo.role}
+                  options={[]}
+                  onSelect={() => undefined}
+                  extra={
+                    <div className="mt-1 border-t border-border px-2 pt-2 text-xs text-muted-foreground">
+                      <label className="flex items-center gap-2">
+                        <span>Keep Source Audio</span>
+                        <input
+                          type="checkbox"
+                          checked={useAudioTrack}
+                          onChange={(event) =>
+                            onUseAudioTrackChange(event.target.checked)
+                          }
+                        />
+                      </label>
+                      <p className="mt-1 text-2xs">Keeps this video's original audio in the generated output.</p>
+                    </div>
+                  }
+                />
+              ) : null
+            }
+          />
           <button
             data-genspace-dropzone
             type="button"
@@ -812,26 +877,29 @@ function H3MediaInputs({
                       setActiveId(null);
                     }}
                     onTrim={
-                      entry.type === "image"
-                        ? undefined
-                        : () => {
+                      item.role === "reference_video" && referenceState.videoCount === 1
+                        ? () => {
                             setEditingId(item.id);
                             setActiveId(null);
                           }
+                        : undefined
                     }
                     extra={
                       entry.type === "video" &&
                       !referenceState.disabledVideoIds.has(item.id) ? (
-                        <label className="mt-1 flex items-center gap-2 border-t border-border px-2 pt-2 text-xs text-muted-foreground">
-                          <span>Use Audio Track</span>
-                          <input
-                            type="checkbox"
-                            checked={referenceState.soundtrackCount > 0}
-                            onChange={(event) =>
-                              setSoundtrack(event.target.checked)
-                            }
-                          />
-                        </label>
+                        <div className="mt-1 border-t border-border px-2 pt-2 text-xs text-muted-foreground">
+                          {referenceState.videoCount > 1 ? <p>Excerpts require one H3 reference video.</p> : null}
+                          <label className="flex items-center gap-2">
+                            <span>Use Audio as Reference</span>
+                            <input
+                              type="checkbox"
+                              checked={referenceState.soundtrackCount > 0}
+                              onChange={(event) =>
+                                setSoundtrack(event.target.checked)
+                              }
+                            />
+                          </label>
+                        </div>
                       ) : null
                     }
                   />
@@ -861,8 +929,9 @@ function H3MediaInputs({
         </div>
       </div>
       <p className="mt-2 text-2xs text-subtle-foreground">
-        Reference videos and audio should be 2–15 seconds each, with no more
-        than 15 seconds total. Use Trim before generating.
+        Control Video is whole-source only and can keep source audio. Reference
+        video excerpts require one reference video and must be 2–15 seconds.
+        Their matching audio guides generated audio; audio references use full clips.
       </p>
       <input
         ref={imageInputRef}
@@ -894,6 +963,17 @@ function H3MediaInputs({
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void addFile(file, pendingRole);
+          event.target.value = "";
+        }}
+      />
+      <input
+        ref={controlVideoInputRef}
+        type="file"
+        accept="video/*"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void addFile(file, "control_video");
           event.target.value = "";
         }}
       />

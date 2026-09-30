@@ -25,11 +25,8 @@ describe("GenSpace mode transitions", () => {
     expect(transition.clearInputImage).toBe(true);
   });
 
-  it("rejects Retake and clears the prompt for Reframe", () => {
+  it("rejects Retake and leaves prompt ownership to the mode state", () => {
     expect(transitionVideoProcessMode("retake")).toBeNull();
-    expect(transitionVideoProcessMode("reframe")).toEqual({
-      mode: "reframe",
-      clearPrompt: true,
-    });
+    expect(transitionVideoProcessMode("reframe")).toEqual({ mode: "reframe" });
   });
 });

@@ -214,6 +214,10 @@ class EnhancePromptRequest(BaseModel):
     mode: Literal["image", "video"]
     modelProfileId: str | None = None
     inputImagePath: str | None = None
+    endImagePath: str | None = None
+    controlImagePath: str | None = None
+    referenceImagePaths: list[str] = Field(default_factory=list, max_length=10)
+    durationSeconds: float | None = Field(default=None, gt=0, le=1200, allow_inf_nan=False)
 
 
 class EnhancePromptResponse(BaseModel):
@@ -574,6 +578,7 @@ class GenerateMusicRequest(BaseModel):
             if self.audioInputs:
                 raise ValueError("Use audioInputs or legacy audioInput, not both")
             self.audioInputs = [self.audioInput]
+            self.audioInput = None
         if len({item.role for item in self.audioInputs}) != len(self.audioInputs):
             raise ValueError("Only one audio input per role is accepted")
         if self.vocalMode == "custom-lyrics":
@@ -678,7 +683,7 @@ class GenerateSpeechRequest(BaseModel):
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4096)]
     referenceAudioPath: str | None = None
     references: list[SpeechReferenceInput] = Field(
-        default_factory=lambda: list[SpeechReferenceInput](), max_length=2
+        default_factory=lambda: list[SpeechReferenceInput](), max_length=3
     )
     enhancePrompt: bool = False
     seed: int | None = Field(default=None, ge=0, le=999_999_999)
@@ -689,6 +694,7 @@ class GenerateSpeechRequest(BaseModel):
             raise ValueError("Use references or legacy referenceAudioPath, not both")
         if self.referenceAudioPath is not None:
             self.references = [SpeechReferenceInput(path=self.referenceAudioPath)]
+            self.referenceAudioPath = None
         return self
 
 

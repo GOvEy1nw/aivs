@@ -80,7 +80,7 @@ const profile = (mediaType: "image" | "video" | "audio"): ModelProfile => ({
     renderStrategies: [],
   },
   music: {
-    enabled: false,
+    enabled: mediaType === "audio",
     supportsInstrumental: false,
     supportsAutoLyrics: false,
     supportsCustomLyrics: false,

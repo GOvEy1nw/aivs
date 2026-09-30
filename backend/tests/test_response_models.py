@@ -25,15 +25,15 @@ class TestSettingsCamelCaseKeys:
 
         assert "useTorchCompile" in data
         assert "use_torch_compile" not in data
-        assert "fastModel" in data
-        assert "fast_model" not in data
+        assert "proModel" in data
+        assert "pro_model" not in data
         assert "seedLocked" in data
         assert "seed_locked" not in data
 
 
 class TestGenerateSnakeCaseKeys:
     def test_snake_case_keys(self, client, enable_wangp):
-        r = client.post("/api/generate", json={"prompt": "test"})
+        r = client.post("/api/generate", json={"prompt": "test", "modelProfileId": "ltx2_25_fast"})
         assert r.status_code == 200
         data = r.json()
         assert "video_path" in data

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { GenerationParams } from "../types/project";
-import { buildImageInputsFromParams } from "./apply-generation-params";
+import {
+  buildImageInputsFromParams,
+  settingsPatchFromGenerationParams,
+} from "./apply-generation-params";
+import { DEFAULT_VIDEO_SETTINGS } from "../views/genspace/constants";
 
 describe("generation parameter media restore", () => {
   it("restores crop recipes without changing stored source media", () => {
@@ -42,5 +46,34 @@ describe("generation parameter media restore", () => {
         },
       },
     ]);
+  });
+});
+
+describe("generation parameter settings restore", () => {
+  it("keeps visual timing after speech metadata and ignores malformed legacy video timing", () => {
+    const current = { ...DEFAULT_VIDEO_SETTINGS, fps: 24, duration: 5 };
+    const speech: GenerationParams = {
+      mode: "text-to-speech",
+      prompt: "hello",
+      model: "indextts2",
+      duration: 0,
+      resolution: "",
+      fps: 0,
+      audio: true,
+      cameraMotion: "none",
+    };
+    const malformedVideo: GenerationParams = {
+      ...speech,
+      mode: "text-to-video",
+      model: "fast",
+      duration: 0,
+      fps: 0,
+    };
+
+    expect(settingsPatchFromGenerationParams(speech, current)).toEqual(current);
+    expect(settingsPatchFromGenerationParams(malformedVideo, current)).toMatchObject({
+      duration: 5,
+      fps: 24,
+    });
   });
 });

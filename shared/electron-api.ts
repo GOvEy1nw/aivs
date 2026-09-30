@@ -24,7 +24,7 @@ export interface ElectronAPI {
   openParentFolderOfFile: (filePath: string) => Promise<void>; showItemInFolder: (filePath: string) => Promise<void>
   getLogs: () => Promise<LogsResponse>; getLogPath: () => Promise<{ logPath: string; logDir: string }>; openLogFolder: () => Promise<boolean>
   getResourcePath: () => Promise<string | null>; getDownloadsPath: () => Promise<string>
-  copyToProjectAssets: (srcPath: string, projectId: string, preserveSource?: boolean) => Promise<{ success: boolean; path?: string; url?: string; error?: string }>
+  copyToProjectAssets: (srcPath: string, projectId: string, preserveSource?: boolean) => Promise<{ success: boolean; path?: string; url?: string; alreadyExisted?: boolean; reusedExisting?: boolean; error?: string }>
   copyGeneratedOutputToProjectAssets: (srcPath: string, projectId: string) => Promise<{ success: boolean; path?: string; url?: string; error?: string }>
   importToProjectAssets: (options: { srcPath: string; projectId: string; onDuplicate?: 'reuse' | 'suffix' | 'overwrite' | 'prompt' }) => Promise<{ success: boolean; path?: string; url?: string; fileName?: string; alreadyExisted?: boolean; reusedExisting?: boolean; needsDuplicateChoice?: boolean; error?: string }>
   getProjectAssetsPath: () => Promise<string>

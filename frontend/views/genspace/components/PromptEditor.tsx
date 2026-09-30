@@ -2,6 +2,7 @@ import { Image, Music, Video } from "lucide-react";
 import type { ReactNode } from "react";
 import { GenPanelSection } from "./GenPanelSection";
 import { MentionTextarea, type MentionOption } from "./MentionTextarea";
+import type { PromptEnhancementReview } from "../hooks/usePromptEnhancement";
 
 type MediaMention = {
   alias: string;
@@ -75,6 +76,7 @@ function PromptMediaTextarea({ value, onChange, onSubmit, canSubmit, disabled, p
 }
 
 export function PromptEditor({
+  enhancementReview,
   title = "",
   value,
   onChange,
@@ -93,6 +95,7 @@ export function PromptEditor({
   onAddMedia,
   mediaAddDisabled,
 }: {
+  enhancementReview?: PromptEnhancementReview;
   title?: string;
   value: string;
   onChange: (value: string) => void;
@@ -116,6 +119,15 @@ export function PromptEditor({
       {leading}
       <div className="relative flex min-w-0 flex-1 flex-col">
         {children ?? <PromptMediaTextarea value={value} onChange={onChange} onSubmit={onSubmit} canSubmit={canSubmit} disabled={disabled} placeholder={placeholder} maxLength={maxLength} height={height} mediaMentions={mediaMentions} onAddMedia={onAddMedia} mediaAddDisabled={mediaAddDisabled} />}
+        {enhancementReview?.text ? <div className="space-y-2 border-t border-border p-3">
+          <p className="text-xs text-muted-foreground">{enhancementReview.applied ? "Applied for generation. Your authored prompt and sequence remain editable above." : "Review the enhanced generation prompt before applying."}</p>
+          <textarea aria-label="Enhanced generation prompt" readOnly value={enhancementReview.text} className="h-32 w-full resize-y rounded bg-input p-2 text-sm" />
+          <div className="flex gap-2">
+            {!enhancementReview.applied ? <button type="button" disabled={disabled || enhancementReview.busy} onClick={enhancementReview.apply} className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground">Apply</button> : null}
+            <button type="button" disabled={disabled} onClick={enhancementReview.discard} className="rounded bg-input px-3 py-1 text-xs">{enhancementReview.applied ? "Use original" : "Discard"}</button>
+          </div>
+        </div> : null}
+        {enhancementReview?.error ? <p role="alert" className="px-3 py-2 text-xs text-destructive">{enhancementReview.error}</p> : null}
         {mediaAliases?.length ? <div className="flex flex-wrap gap-1 border-t border-border px-2 py-1.5">{mediaAliases.map((alias) => <button key={alias} type="button" onClick={() => onChange(value ? `${value} ${alias}` : alias)} className="rounded bg-input px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-surface-hover">{alias}</button>)}</div> : null}
         {actions || bottomRight ? <div data-testid="prompt-editor-footer" className="flex items-center justify-between gap-2 rounded-b-lg px-2 py-1.5"><div data-testid="prompt-editor-footer-left" className="flex min-w-0 items-center">{actions}</div><div data-testid="prompt-editor-footer-right" className="ml-auto flex min-w-0 items-center">{bottomRight}</div></div> : null}
       </div>

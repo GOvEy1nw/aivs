@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import logging
 import math
@@ -27,6 +28,12 @@ from services.wangp_profiles import resolve_profiles
 logger = logging.getLogger(__name__)
 AUDIO_PROFILE_THREE_PLUS = 3.5
 CUSTOM_FINETUNE_CHECKPOINT_KEY = "_aivs_custom_checkpoint"
+_LOCAL_LLM_ENGINES = {"deepy": "qwen35_4b"}
+_PROMPT_ENHANCER_ARGUMENTS = (
+    "state", "model_type", "model_def", "prompt_enhancer_modes", "original_prompts",
+    "image_start", "original_image_refs", "is_image", "audio_only", "seed", "progress",
+    "override_profile",
+)
 
 
 def resolve_audio_performance_profile(global_profile: float) -> float:
@@ -98,14 +105,7 @@ class WanGPBridge:
         self._submitted_manifest_once = False
         self._session_lock = threading.Lock()
         self._last_preview_write_at = 0.0
-        self._preview_options: dict[str, object] = {
-            "mode": "tae",
-            "update_rate": "adaptive",
-            "device": "auto",
-            "max_edge": 512,
-            "preview_fps": 16,
-            "webp_quality": 72,
-        }
+        self._preview_mode = "tiny_vae_video"
         runtime_overrides: dict[str, object] = {}
         if checkpoints_dir is not None:
             runtime_overrides["checkpoints_paths"] = [str(checkpoints_dir.resolve()), "."]
@@ -125,21 +125,11 @@ class WanGPBridge:
         self,
         *,
         mode: str,
-        update_rate: str,
-        device: str,
-        max_edge: int,
-        preview_fps: int,
-        webp_quality: int,
     ) -> None:
+        if mode not in {"rgb", "tiny_vae_frames", "tiny_vae_video"}:
+            raise ValueError(f"Unsupported native preview mode: {mode}")
         with self._session_lock:
-            self._preview_options = {
-                "mode": mode,
-                "update_rate": update_rate,
-                "device": device,
-                "max_edge": max_edge,
-                "preview_fps": preview_fps,
-                "webp_quality": webp_quality,
-            }
+            self._preview_mode = mode
 
     def set_runtime_preferences(
         self,
@@ -186,13 +176,37 @@ class WanGPBridge:
                     if not isinstance(loaded, dict):
                         raise ValueError("WanGP config template must contain a JSON object")
                     payload = cast(dict[str, object], loaded)
-            payload.update(overrides)
+            self._merge_config(payload, overrides)
             config_path.parent.mkdir(parents=True, exist_ok=True)
             temporary_path = config_path.with_name(f".{config_path.name}.tmp")
             temporary_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
             temporary_path.replace(config_path)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             logger.warning("Could not update WanGP runtime settings: %s", exc)
+
+    @staticmethod
+    def _merge_config(target: dict[str, object], overrides: dict[str, object]) -> None:
+        for key, value in overrides.items():
+            existing = target.get(key)
+            if isinstance(existing, dict) and isinstance(value, dict):
+                WanGPBridge._merge_config(cast(dict[str, object], existing), cast(dict[str, object], value))
+            else:
+                target[key] = value
+
+    def _ensure_local_enhancer_config(self, session: object | None = None) -> None:
+        """Keep AiVS prompt enhancement on WanGP's local Qwen engine."""
+        self._write_runtime_config({"llm_engines": dict(_LOCAL_LLM_ENGINES)})
+        if session is None:
+            return
+        runtime_accessor = getattr(session, "_ensure_runtime", None)
+        if not callable(runtime_accessor):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: prompt enhancement requires session runtime access.")
+        runtime = runtime_accessor()
+        module = getattr(runtime, "module", None)
+        server_config = getattr(module, "server_config", None)
+        if not isinstance(server_config, dict):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: prompt enhancement requires a mutable native config.")
+        self._merge_config(cast(dict[str, object], server_config), {"llm_engines": dict(_LOCAL_LLM_ENGINES)})
 
     def _ensure_flashvsr_config(self) -> None:
         """Seed only the missing Media Flow default in AiVS-owned config."""
@@ -336,6 +350,8 @@ class WanGPBridge:
         reference_image_paths: list[str] | None = None,
         reference_video_paths: list[str] | None = None,
         reference_audio_paths: list[str] | None = None,
+        h3_video_excerpt_positions: list[str] | None = None,
+        h3_audio_excerpt_positions: list[str] | None = None,
     ) -> str:
         active_model_type = model_type if model_type is not None else self._video_model_type
         resolution = self._map_video_resolution(resolution_label, aspect_ratio)
@@ -402,6 +418,8 @@ class WanGPBridge:
             settings["video_guide"] = str(Path(reference_video_paths[0]).resolve())
             if len(reference_video_paths) > 1:
                 settings["video_guide2"] = str(Path(reference_video_paths[1]).resolve())
+            if len(reference_video_paths) > 2:
+                settings["video_guide3"] = str(Path(reference_video_paths[2]).resolve())
             settings["video_prompt_type"] = video_prompt_type or ("V+-" if len(reference_video_paths) > 1 else "V-")
 
         if video_guide_outpainting is not None:
@@ -419,7 +437,17 @@ class WanGPBridge:
             settings["audio_guide"] = str(Path(reference_audio_paths[0]).resolve())
             if len(reference_audio_paths) > 1:
                 settings["audio_guide2"] = str(Path(reference_audio_paths[1]).resolve())
-            settings["audio_prompt_type"] = audio_prompt_type or ("AB" if len(reference_audio_paths) > 1 else "A")
+            if len(reference_audio_paths) > 2:
+                settings["audio_guide3"] = str(Path(reference_audio_paths[2]).resolve())
+            settings["audio_prompt_type"] = audio_prompt_type or ("ABD" if len(reference_audio_paths) > 2 else "AB" if len(reference_audio_paths) > 1 else "A")
+
+        if h3_video_excerpt_positions or h3_audio_excerpt_positions:
+            custom_settings = settings.get("custom_settings")
+            settings["custom_settings"] = cast(dict[str, object], custom_settings) if isinstance(custom_settings, dict) else {}
+            if h3_video_excerpt_positions:
+                settings["custom_settings"]["h3_video_excerpt_positions"] = " ".join(h3_video_excerpt_positions)
+            if h3_audio_excerpt_positions:
+                settings["custom_settings"]["h3_audio_excerpt_positions"] = " ".join(h3_audio_excerpt_positions)
 
         return self._submit_video_settings(
             settings=settings,
@@ -703,6 +731,11 @@ class WanGPBridge:
             settings["audio_guide"] = str(Path(reference_audio_paths[0]).resolve())
             settings["audio_guide2"] = str(Path(reference_audio_paths[1]).resolve())
             settings["audio_prompt_type"] = "AB2" if model_type == "index_tts25" else "AB"
+        elif len(reference_audio_paths) == 3:
+            settings["audio_guide"] = str(Path(reference_audio_paths[0]).resolve())
+            settings["audio_guide2"] = str(Path(reference_audio_paths[1]).resolve())
+            settings["audio_guide3"] = str(Path(reference_audio_paths[2]).resolve())
+            settings["audio_prompt_type"] = "ABD2" if model_type == "index_tts25" else "ABD"
         if seed is not None:
             settings["seed"] = seed
         outputs = self._run_manifest(
@@ -759,12 +792,20 @@ class WanGPBridge:
         mode: str,
         model_type: str,
         image_path: str | None = None,
+        end_image_path: str | None = None,
+        control_image_path: str | None = None,
+        reference_image_paths: list[str] | None = None,
+        duration_seconds: float | None = None,
     ) -> str:
         return self._run_prompt_enhancer(
             prompt=prompt,
             mode=mode,
             model_type=model_type,
             image_path=image_path,
+            end_image_path=end_image_path,
+            control_image_path=control_image_path,
+            reference_image_paths=reference_image_paths,
+            duration_seconds=duration_seconds,
         )
 
     def _run_prompt_enhancer(
@@ -774,12 +815,35 @@ class WanGPBridge:
         mode: str,
         model_type: str,
         image_path: str | None,
+        end_image_path: str | None = None,
+        control_image_path: str | None = None,
+        reference_image_paths: list[str] | None = None,
+        duration_seconds: float | None = None,
         think: bool = False,
         seed: int | None = None,
     ) -> str:
         session = self._get_session()
-        runtime = session._ensure_runtime()
-        prompt_enhancer = ("TI" if image_path else "T") + ("K" if think else "")
+        self._ensure_local_enhancer_config(session)
+        runtime_accessor = getattr(session, "_ensure_runtime", None)
+        if not callable(runtime_accessor):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: prompt enhancement requires session runtime access.")
+        runtime = runtime_accessor()
+        runtime_root = getattr(runtime, "root", None)
+        module = getattr(runtime, "module", None)
+        state = getattr(session, "_state", None)
+        enhancer = getattr(module, "exec_prompt_enhancer_engine", None)
+        normalize = getattr(module, "normalize_generated_prompt_lines", None)
+        get_model_def = getattr(module, "get_model_def", None)
+        if not isinstance(state, dict) or not callable(enhancer) or not callable(normalize) or not callable(get_model_def):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: prompt enhancement API is unavailable.")
+        try:
+            parameters = tuple(inspect.signature(enhancer).parameters)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: prompt enhancer signature cannot be verified.") from exc
+        if parameters[:len(_PROMPT_ENHANCER_ARGUMENTS)] != _PROMPT_ENHANCER_ARGUMENTS or "enhancer_kwargs" not in parameters:
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: prompt enhancer signature is incompatible.")
+        has_images = bool(image_path or end_image_path or control_image_path or reference_image_paths)
+        prompt_enhancer = ("TI" if has_images else "T") + ("K" if think else "")
         image_start = [str(Path(image_path).resolve())] if image_path else [None]
         is_image = mode == "image"
 
@@ -787,32 +851,70 @@ class WanGPBridge:
             def __call__(self, *args: object, **kwargs: object) -> None:
                 return None
 
-        with self._load_api_module()._pushd(runtime.root):
-            model_def = runtime.module.get_model_def(model_type)
-            if model_def is None:
+        if not isinstance(runtime_root, Path):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: prompt enhancement runtime has no source root.")
+        with chdir(runtime_root):
+            model_def_value = get_model_def(model_type)
+            if not isinstance(model_def_value, dict):
                 raise RuntimeError(f"Unknown WanGP model_type: {model_type}")
-            enhanced_prompts = runtime.module.exec_prompt_enhancer_engine(
-                session._state,
+            model_def = cast(dict[str, object], model_def_value)
+            enhancer_context: dict[str, object] = {
+                "image_prompt_type": ("S" if image_path else "") + ("E" if end_image_path else ""),
+                "video_prompt_type": ("I" if reference_image_paths else "") + ("V" if control_image_path else ""),
+                "audio_prompt_type": "",
+            }
+            context_duration = duration_seconds if mode == "video" else None
+            if context_duration is not None and model_def.get("prompt_enhancer_video_duration", False):
+                enhancer_context["video_duration_seconds"] = context_duration
+            image_refs = None
+            if has_images:
+                from PIL import Image
+
+                native_images = importlib.import_module("shared.prompt_enhancer.images")
+                paths_and_labels = (
+                    ([(image_path, "start image")] if image_path else [])
+                    + ([(end_image_path, "end image")] if end_image_path else [])
+                    + [(path, f"Image reference no {index + 1}") for index, path in enumerate(reference_image_paths or [])]
+                    + ([(control_image_path, "Control Image")] if control_image_path else [])
+                )
+                images: list[Image.Image] = []
+                for path, _ in paths_and_labels:
+                    with Image.open(path) as source:
+                        images.append(source.copy())
+                labels = [label for _, label in paths_and_labels]
+                enhancer_context["image_contexts"] = [native_images.ImageContext(images, labels, context_duration)]
+                image_start = [images[0]] if image_path else [None]
+                image_refs = [image for image, label in zip(images, labels) if label.startswith("Image reference no")]
+                if control_image_path:
+                    enhancer_context["control_image"] = images[-1]
+            enhanced_prompts = enhancer(
+                state,
                 model_type,
                 model_def,
                 prompt_enhancer,
                 [prompt],
                 image_start,
-                None,
+                image_refs,
                 is_image,
                 bool(model_def.get("audio_only", False)),
                 seed if seed is not None else -1,
                 _PromptEnhanceProgress(),
                 -1,
-                enhancer_kwargs={
-                    "image_prompt_type": "S" if image_path else "",
-                    "video_prompt_type": "",
-                    "audio_prompt_type": "",
-                },
+                enhancer_kwargs=enhancer_context,
             )
-            if not enhanced_prompts or not enhanced_prompts[0]:
+            if (
+                not isinstance(enhanced_prompts, list)
+                or not enhanced_prompts
+            ):
                 raise RuntimeError("WanGP completed without producing an enhanced prompt")
-            return runtime.module.normalize_generated_prompt_lines(enhanced_prompts[0][0], "FG").strip()
+            prompt_rows = cast(list[object], enhanced_prompts)
+            first_row = prompt_rows[0]
+            if not isinstance(first_row, (list, tuple)) or not first_row or not isinstance(first_row[0], str):
+                raise RuntimeError("WanGP completed without producing an enhanced prompt")
+            normalized = normalize(first_row[0], "FG")
+            if not isinstance(normalized, str) or not normalized.strip():
+                raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: prompt enhancer returned an invalid prompt.")
+            return normalized.strip()
 
     @staticmethod
     def compute_num_frames(duration_seconds: int, fps: int) -> int:
@@ -902,6 +1004,7 @@ class WanGPBridge:
         with self._session_lock:
             if self._session is None:
                 self._ensure_flashvsr_config()
+                self._ensure_local_enhancer_config()
                 self._write_runtime_config(
                     {
                         "fit_canvas": 0,
@@ -981,6 +1084,7 @@ class WanGPBridge:
         self._reject_custom_finetune_request(manifest)
         self._manifest_model_type(manifest)
         session = self._get_session()
+        self._ensure_local_enhancer_config(session)
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1042,13 +1146,18 @@ class WanGPBridge:
         error_lines: deque[str] = deque(maxlen=40)
         cancel_requested = False
         console_progress: dict[str, object] = {"phase": "", "progress": -1, "logged_at": 0.0}
+        cancel = getattr(job, "cancel", None)
+        events = getattr(job, "events", None)
+        get_event = getattr(events, "get", None)
+        if not callable(cancel) or not callable(get_event) or not isinstance(getattr(job, "done", None), bool):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: generation job API is unavailable.")
 
         while True:
             if is_cancelled() and not cancel_requested:
                 cancel_requested = True
-                job.cancel()
+                cancel()
 
-            event = job.events.get(timeout=0.2)
+            event = get_event(timeout=0.2)
             if event is not None:
                 self._handle_event(event, on_progress, error_lines, console_progress)
 
@@ -1058,18 +1167,33 @@ class WanGPBridge:
             if job.done and event is None:
                 break
 
-        result = job.result()
+        result_getter = getattr(job, "result", None)
+        if not callable(result_getter):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: generation job has no result API.")
+        result = result_getter()
 
         if cancel_requested or is_cancelled():
             raise RuntimeError("Generation was cancelled")
-        if not result.success:
-            details = " | ".join(error_lines) if error_lines else "WanGP generation failed"
+        success = getattr(result, "success", None)
+        errors = getattr(result, "errors", None)
+        if not isinstance(success, bool) or not isinstance(errors, list):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: generation result has an invalid shape.")
+        if not success:
+            structured_errors = self._format_generation_errors(cast(list[object], errors))
+            details = " | ".join(error_lines or structured_errors) if (error_lines or structured_errors) else "WanGP generation failed"
             raise RuntimeError(details)
-        outputs = result.generated_files
+        outputs = getattr(result, "generated_files", None)
+        if not isinstance(outputs, list):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: generation result contains invalid output paths.")
+        output_paths: list[str] = []
+        for output_path in cast(list[object], outputs):
+            if not isinstance(output_path, str):
+                raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: generation result contains invalid output paths.")
+            output_paths.append(output_path)
 
         filtered_outputs = [
             str(Path(path).resolve())
-            for path in outputs
+            for path in output_paths
             if Path(path).suffix.lower() in media_suffixes
         ]
         if not filtered_outputs:
@@ -1077,6 +1201,18 @@ class WanGPBridge:
 
         on_progress("complete", 100, None, None)
         return self._dedupe_preserve_order(filtered_outputs)
+
+    @staticmethod
+    def _format_generation_errors(errors: list[object]) -> list[str]:
+        details: list[str] = []
+        for error in errors:
+            message = getattr(error, "message", None)
+            stage = getattr(error, "stage", None)
+            if not isinstance(message, str) or not message.strip():
+                continue
+            prefix = f"{stage}: " if isinstance(stage, str) and stage.strip() else ""
+            details.append(f"{prefix}{message.strip()}")
+        return details
 
     def _handle_event(
         self,
@@ -1496,6 +1632,7 @@ class WanGPBridge:
         params = manifest[0].get("params")
         if not isinstance(params, dict):
             return
+        manifest_params = cast(dict[str, object], params)
         output_keys = {
             "video_output_codec",
             "video_container",
@@ -1506,8 +1643,8 @@ class WanGPBridge:
         }
         patch: dict[str, object] = {}
         for key in output_keys:
-            if key in params:
-                patch[key] = params[key]
+            if key in manifest_params:
+                patch[key] = manifest_params.pop(key)
         if not patch:
             return
         try:
@@ -1521,19 +1658,21 @@ class WanGPBridge:
 
     def _apply_native_preview_setting(self, session: object) -> None:
         with self._session_lock:
-            mode = self._preview_options.get("mode")
-        generation_preview: str = (
-            mode
-            if isinstance(mode, str) and mode in {"tiny_vae_frames", "tiny_vae_video"}
-            else "tiny_vae_video" if mode == "tae" else "rgb"
-        )
+            generation_preview = self._preview_mode
         native_session = cast(Any, session)
-        runtime = native_session._ensure_runtime()
-        server_config = runtime.module.server_config
-        if server_config.get("generation_preview") == generation_preview:
+        runtime_accessor = getattr(native_session, "_ensure_runtime", None)
+        if not callable(runtime_accessor):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: preview configuration requires session runtime access.")
+        runtime = runtime_accessor()
+        server_config = getattr(getattr(runtime, "module", None), "server_config", None)
+        close = getattr(native_session, "close", None)
+        if not isinstance(server_config, dict) or not callable(close):
+            raise RuntimeError("UNSUPPORTED_WANGP_RUNTIME: preview configuration API is unavailable.")
+        typed_server_config = cast(dict[str, object], server_config)
+        if typed_server_config.get("generation_preview") == generation_preview:
             return
-        native_session.close()
-        server_config["generation_preview"] = generation_preview
+        close()
+        typed_server_config["generation_preview"] = generation_preview
 
     @staticmethod
     def _select_final_output(outputs: list[str]) -> str:

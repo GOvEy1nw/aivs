@@ -28,7 +28,7 @@ def _write_png(path: Path) -> Path:
     return path
 
 
-def test_catalog_and_upscale_route_validate_and_invoke_bridge(client, test_state, tmp_path: Path) -> None:
+def test_catalog_and_upscale_route_validate_and_invoke_bridge(client, test_state, enable_wangp, tmp_path: Path) -> None:
     catalog = client.get("/api/media-upscale/catalog")
     assert catalog.status_code == 200
     methods = {item["id"]: item for item in catalog.json()["methods"]}
@@ -68,11 +68,15 @@ def test_bridge_seeds_only_missing_flashvsr_and_submits_media_flow(tmp_path: Pat
         done = True
         events = _Events()
 
+        def cancel(self) -> None:
+            pass
+
         def result(self):
-            return type("Result", (), {"success": True, "generated_files": [str(tmp_path / "output.png")]})()
+            return type("Result", (), {"success": True, "errors": [], "generated_files": [str(tmp_path / "output.png")]})()
 
     class _Session:
         def __init__(self) -> None:
+            self._state = {"gen": {}}
             self.call: tuple[object, dict[str, object]] | None = None
 
         def submit_media_postprocessing(self, source: str, **kwargs: object):

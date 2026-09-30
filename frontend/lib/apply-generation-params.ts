@@ -89,6 +89,7 @@ export function toStoredInputMediaEntry(
     role: string
     alias?: string
     type?: 'image' | 'video' | 'audio'
+    useAudioTrack?: boolean
     trimStartTime?: number
     trimDuration?: number
     mediaDuration?: number
@@ -103,6 +104,7 @@ export function toStoredInputMediaEntry(
   }
   if (path) entry.path = path
   if (item.type) entry.type = item.type
+  if (item.useAudioTrack !== undefined) entry.useAudioTrack = item.useAudioTrack
   if (item.alias) entry.alias = item.alias
   if (item.trimStartTime !== undefined) entry.trimStartTime = item.trimStartTime
   if (item.trimDuration !== undefined) entry.trimDuration = item.trimDuration
@@ -200,6 +202,7 @@ export function buildImageInputsFromParams(
         url,
         role: item.role,
         type: item.type ?? inferInputType(item.role),
+        useAudioTrack: item.useAudioTrack,
         trimStartTime: item.trimStartTime,
         trimDuration: item.trimDuration,
         mediaDuration: item.mediaDuration,
@@ -249,6 +252,8 @@ export function settingsPatchFromGenerationParams(
   params: GenerationParams,
   current: GenSpaceSettingsPatch,
 ): GenSpaceSettingsPatch {
+  if (genSpaceModeFromParams(params) === 'music') return current
+
   if (params.mode === 'text-to-image') {
     const imageProfileId =
       params.imageProfileId ||
@@ -276,9 +281,17 @@ export function settingsPatchFromGenerationParams(
     model,
     videoProfileId: params.videoProfileId || current.videoProfileId,
     styleId: params.styleId,
-    duration: params.duration ?? current.duration,
+    duration:
+      typeof params.duration === 'number' &&
+      Number.isFinite(params.duration) &&
+      params.duration > 0
+        ? params.duration
+        : current.duration,
     videoResolution: params.resolution || current.videoResolution,
-    fps: params.fps ?? current.fps,
+    fps:
+      typeof params.fps === 'number' && Number.isFinite(params.fps) && params.fps > 0
+        ? params.fps
+        : current.fps,
     audio: params.audio ?? current.audio,
     aspectRatio: params.imageAspectRatio || current.aspectRatio,
     imageAspectRatio: params.imageAspectRatio || current.imageAspectRatio,

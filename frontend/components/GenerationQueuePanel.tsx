@@ -1,7 +1,6 @@
 import {
   GripHorizontal,
   Image,
-  ListOrdered,
   Music2,
   Trash2,
   Video,

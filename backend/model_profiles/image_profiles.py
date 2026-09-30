@@ -9,11 +9,25 @@ from model_profiles.types import (
     CONTROL_POSE_ROLE,
     CURATED_ASPECT_RATIOS,
     InputMediaPolicy,
+    ModelLicenseInfo,
     ModelProfile,
     REFERENCE_PEOPLE_OBJECTS_ROLE,
     REFERENCE_SUBJECT_ROLE,
     WanGPModelMetadata,
     _image_setting_values,  # pyright: ignore[reportPrivateUsage]
+)
+
+
+_QWEN_IMAGE_21_LICENSE = ModelLicenseInfo(
+    project_license="Apache License 2.0",
+    weights_license="Qwen Research License Agreement",
+    commercial_use="restricted",
+    attribution_required=True,
+    source_project="Qwen Image 2.1 / DeepBeepMeep Wan2GP",
+    notes=(
+        "The Qwen Image 2.1 weights are licensed for non-commercial use. "
+        "Commercial use requires a separate Qwen commercial licence."
+    ),
 )
 
 def _image_wangp_metadata(
@@ -649,6 +663,68 @@ IMAGE_PROFILES: tuple[ModelProfile, ...] = (
         min_resolution_tier="540p",
         max_resolution_tier="1440p",
         wangp_resolution_categories=("<=2k",),
+    ),
+    ModelProfile(
+        id="qwen_image_21_7b_pruna",
+        display_name="Qwen Image 2.1 (Pruna)",
+        media_type="image",
+        visible=True,
+        status="experimental",
+        wangp_model_type="qwen_image_21_7B",
+        wangp_metadata=_image_wangp_metadata(
+            family="qwen",
+            family_label="Qwen",
+            base_model_type="qwen_image_21_7B",
+            inputs=("text", "image"),
+            image_to_image=True,
+            reference_images=True,
+            multiple_references=True,
+            setting_values=_image_setting_values(
+                video_prompt_type={
+                    "guide_preprocessing": None,
+                    "mask_preprocessing": None,
+                    "guide_custom_choices": None,
+                    "image_ref_choices": {
+                        "letters_filter": "KI",
+                        "choices": [
+                            {"label": "None", "value": ""},
+                            {
+                                "label": "First image is the main subject or landscape",
+                                "value": "KI",
+                            },
+                            {
+                                "label": "Reference images are people or objects",
+                                "value": "I",
+                            },
+                        ],
+                    },
+                    "custom_video_selection": None,
+                    "forced": "",
+                },
+            ),
+        ),
+        text_to_image=True,
+        reference_images=True,
+        lora="experimental",
+        wangp_accelerator_profile_id="qwen_image_21_pruna_v0_1_8_steps",
+        input_media=InputMediaPolicy(
+            supports_image_inputs=True,
+            tooltip_label="Reference Images",
+            max_images=10,
+            default_role="reference_subject",
+            roles=(
+                REFERENCE_SUBJECT_ROLE,
+                REFERENCE_PEOPLE_OBJECTS_ROLE,
+            ),
+        ),
+        default_aspect_ratio="1:1",
+        default_resolution_tier="720p",
+        allowed_aspect_ratios=CURATED_ASPECT_RATIOS,
+        allowed_resolution_tiers=("540p", "720p", "1080p", "1440p"),
+        min_resolution_tier="540p",
+        max_resolution_tier="1440p",
+        required_pack_ids=("qwen_image_21_7b_pruna",),
+        license=_QWEN_IMAGE_21_LICENSE,
     ),
     ModelProfile(
         id="hidream_o1_dev",

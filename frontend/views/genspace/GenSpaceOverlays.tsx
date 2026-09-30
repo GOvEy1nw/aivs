@@ -5,6 +5,7 @@ import {
 import type {
   Dispatch,
   RefObject,
+  ReactNode,
   SetStateAction,
 } from "react";
 import { DeleteAssetDialog } from "../../components/DeleteAssetDialog";
@@ -15,6 +16,7 @@ import type { DuplicateFilenameChoice } from "../../lib/media-import";
 import type { Asset } from "../../types/project";
 import type { ImageUseTarget } from "../../components/UseImageDropdown";
 import type { VideoUseTarget } from "../../components/UseVideoDropdown";
+import type { GalleryHandoffDestination } from "./logic/gallery-handoff-policy";
 import { AssetContextMenu } from "../editor/AssetContextMenu";
 
 type Projects = ProjectAssetsContextType;
@@ -39,6 +41,8 @@ export interface GenSpaceOverlaysProps {
   onToggleFavorite: (asset: Asset) => void;
   onUseImage: (asset: Asset, target: ImageUseTarget) => void;
   onUseVideo: (asset: Asset, target: VideoUseTarget) => void;
+  getHandoffDestinations: (asset: Asset) => readonly GalleryHandoffDestination[];
+  onHandoff: (asset: Asset, destination: GalleryHandoffDestination) => void;
   onCopySettings: (asset: Asset) => void;
   setAssetActiveTake: Projects["setAssetActiveTake"];
   setTakesViewAssetId: (assetId: string | null) => void;
@@ -56,6 +60,7 @@ export interface GenSpaceOverlaysProps {
   confirmDelete: () => void;
   error: string | null;
   dismissError: () => void;
+  excerptHandoff: ReactNode;
 }
 
 export function GenSpaceOverlays({
@@ -75,6 +80,8 @@ export function GenSpaceOverlays({
   onToggleFavorite,
   onUseImage,
   onUseVideo,
+  getHandoffDestinations,
+  onHandoff,
   onCopySettings,
   setAssetActiveTake,
   setTakesViewAssetId,
@@ -90,6 +97,7 @@ export function GenSpaceOverlays({
   confirmDelete,
   error,
   dismissError,
+  excerptHandoff,
 }: GenSpaceOverlaysProps) {
   return (
     <>
@@ -188,6 +196,8 @@ export function GenSpaceOverlays({
           onToggleFavorite={onToggleFavorite}
           onUseImage={onUseImage}
           onUseVideo={onUseVideo}
+          getHandoffDestinations={getHandoffDestinations}
+          onHandoff={onHandoff}
           onCopySettings={onCopySettings}
           setAssetActiveTake={setAssetActiveTake}
           setTakesViewAssetId={setTakesViewAssetId}
@@ -211,6 +221,7 @@ export function GenSpaceOverlays({
       {error ? (
         <GenerationErrorDialog error={error} onDismiss={dismissError} />
       ) : null}
+      {excerptHandoff}
     </>
   );
 }

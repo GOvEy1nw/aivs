@@ -35,8 +35,9 @@ class PromptEnhancementHandler(StateHandlerBase):
             return self._enhance(req)
 
     def _enhance(self, req: EnhancePromptRequest) -> EnhancePromptResponse:
-        if req.inputImagePath and not Path(req.inputImagePath).exists():
-            raise HTTPError(400, f"INPUT_IMAGE_NOT_FOUND: {req.inputImagePath}")
+        for image_path in [req.inputImagePath, req.endImagePath, req.controlImagePath, *req.referenceImagePaths]:
+            if image_path and not Path(image_path).is_file():
+                raise HTTPError(400, f"INPUT_IMAGE_NOT_FOUND: {image_path}")
         model_type = self._resolve_model_type(req)
         try:
             enhanced = self._wangp_bridge.enhance_prompt(
@@ -44,10 +45,16 @@ class PromptEnhancementHandler(StateHandlerBase):
                 mode=req.mode,
                 model_type=model_type,
                 image_path=req.inputImagePath,
+                end_image_path=req.endImagePath,
+                control_image_path=req.controlImagePath,
+                reference_image_paths=req.referenceImagePaths,
+                duration_seconds=req.durationSeconds,
             )
         except Exception as exc:
             raise HTTPError(500, str(exc)) from exc
 
+        if not enhanced.strip():
+            raise HTTPError(500, "PROMPT_ENHANCEMENT_EMPTY: The local enhancer returned no prompt.")
         return EnhancePromptResponse(prompt=enhanced)
 
     def _resolve_model_type(self, req: EnhancePromptRequest) -> str:

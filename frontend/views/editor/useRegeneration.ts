@@ -173,7 +173,7 @@ export function useRegeneration(params: UseRegenerationParams) {
       if (clipId) {
         setClips(prev => prev.map(c => c.id === clipId ? { ...c, isRegenerating: false } : c))
       }
-      setRegenerationPreError('Retake assets cannot be regenerated yet. Try using Retake from the clip menu instead.')
+      setRegenerationPreError('Retake is not supported by the current local runtime.')
       return
     }
 

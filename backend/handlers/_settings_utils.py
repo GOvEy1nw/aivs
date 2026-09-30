@@ -76,6 +76,23 @@ def collect_changed_paths(before: JSONValue, after: JSONValue, prefix: str = "")
 
 def migrate_legacy_settings(raw: Mapping[str, JSONValue]) -> JSONObject:
     migrated: JSONObject = dict(raw)
+    preview = migrated.get("preview_settings", migrated.get("previewSettings"))
+    if _is_json_object(preview):
+        preview = dict(preview)
+        mode = preview.get("mode", "tiny_vae_video")
+        if mode == "tae":
+            preview["mode"] = "tiny_vae_video"
+        elif mode not in ("rgb", "tiny_vae_frames", "tiny_vae_video"):
+            preview["mode"] = "rgb"
+            migrated["preview_migration_notice"] = (
+                "Previews can no longer be disabled. Your previous Off setting was changed to Fast RGB."
+                if mode == "off" else
+                "An unsupported preview mode was changed to Fast RGB. Please review your preview settings."
+            )
+        for key in ("update_rate", "updateRate", "device", "max_edge", "maxEdge", "preview_fps", "previewFps", "webp_quality", "webpQuality"):
+            preview.pop(key, None)
+        migrated.pop("previewSettings", None)
+        migrated["preview_settings"] = preview
     if (
         "prompt_enhancer_enabled" in migrated
         and "prompt_enhancer_enabled_t2v" not in migrated

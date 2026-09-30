@@ -590,6 +590,14 @@ export function SettingsModal({
               <div className="space-y-3 border-t border-border pt-4">
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Generation Previews</h3>
+                  {settings.previewMigrationNotice && (
+                    <div role="status" className="mt-2 text-sm text-foreground">
+                      <p>{settings.previewMigrationNotice}</p>
+                      <Button type="button" variant="ghost" onClick={() => updateSettings({ previewMigrationNotice: "" })}>
+                        Dismiss notice
+                      </Button>
+                    </div>
+                  )}
                   <p className="mt-1 text-xs leading-relaxed text-muted">
                     Tiny VAE provides clearer previews where supported; other models use Fast RGB. Video previews show motion, while image generations keep still previews.
                   </p>
@@ -598,7 +606,7 @@ export function SettingsModal({
                   <label className="space-y-1.5">
                     <span className="text-xs text-muted">Mode</span>
                     <select
-                      value={advancedSettings.previewSettings.mode === "off" ? "rgb" : advancedSettings.previewSettings.mode}
+                      value={advancedSettings.previewSettings.mode}
                       disabled={advancedSaving}
                       onChange={(event) => {
                         setAdvancedSettings((current) => ({ ...current, previewSettings: { ...current.previewSettings, mode: event.target.value as typeof current.previewSettings.mode } }));
@@ -608,7 +616,7 @@ export function SettingsModal({
                     >
                       <option value="rgb">Fast RGB</option>
                       <option value="tiny_vae_frames">Tiny VAE frames</option>
-                      <option value="tae">Tiny VAE video</option>
+                      <option value="tiny_vae_video">Tiny VAE video</option>
                     </select>
                   </label>
                 </div>

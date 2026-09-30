@@ -86,6 +86,7 @@ _RESOLUTION_TABLE: dict[tuple[str, ResolutionTier, AspectRatio], tuple[int, int]
 _SHARED_IMAGE_RESOLUTION_PROFILE_IDS = (
     "flux2_klein_9b",
     "qwen_image_2512_20B",
+    "qwen_image_21_7b_pruna",
     "qwen_image_edit_plus2_20B",
     "krea2_turbo_edit",
     "ideogram4_int8",
@@ -154,6 +155,7 @@ _PROFILE_RESOLUTION_TIERS: dict[str, tuple[ResolutionTier, ...]] = {
             "flux2_klein_4b",
             "flux2_klein_9b",
             "qwen_image_2512_20B",
+            "qwen_image_21_7b_pruna",
             "hidream_o1_dev",
             "krea2_turbo_edit",
             "qwen_image_edit_plus2_20B",

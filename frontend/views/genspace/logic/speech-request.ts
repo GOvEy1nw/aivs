@@ -3,9 +3,9 @@ import type { GenerateSpeechRequest, SpeechGenerationRecipeV2, SpeechSettings } 
 const MAX_SPEECH_TEXT_LENGTH = 4096;
 
 export function buildSpeechGenerationCommand(text: string, settings: SpeechSettings, enhancePrompt: boolean): { request: GenerateSpeechRequest; recipe: SpeechGenerationRecipeV2 } | null {
-  const dialogue = settings.references.length === 2;
+  const dialogue = settings.references.length >= 2;
   const segments = settings.segments.filter(({ text: segmentText }) => segmentText.trim());
-  if (!settings.profileId || settings.references.length > 2 || (dialogue && ![1, 2].every((speaker) => segments.some((segment) => segment.speaker === speaker)))) return null;
+  if (!settings.profileId || settings.references.length > 3 || (dialogue && !Array.from({ length: settings.references.length }, (_, index) => index + 1).every((speaker) => segments.some((segment) => segment.speaker === speaker)))) return null;
   const compiledText = dialogue
     ? segments.map(({ speaker, text: segmentText }) => `Speaker ${speaker}: ${segmentText.trim()}`).join("\n")
     : text.trim();

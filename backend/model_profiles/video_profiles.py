@@ -392,8 +392,8 @@ _h3_quality_profile = ModelProfile(
             tooltip_label="Add H3 frames, controls, or references",
             max_images=12,
             max_reference_images=9,
-            max_reference_videos=2,
-            max_reference_audios=2,
+            max_reference_videos=3,
+            max_reference_audios=3,
             max_combined_references=12,
             default_role="start_image",
             roles=(START_IMAGE_ROLE, END_IMAGE_ROLE, CONTROL_VIDEO_ROLE, AUDIO_GUIDE_ROLE, H3_REFERENCE_IMAGE_ROLE, H3_REFERENCE_VIDEO_ROLE, H3_REFERENCE_AUDIO_ROLE),
@@ -407,7 +407,7 @@ _h3_quality_profile = ModelProfile(
         video_audio=VideoAudioPolicy(
             status="experimental", handler="video_generation", required_pack_ids=("minimax-h3-quality",),
             soundtrack=True, audio_conditioning=True, control_video_audio=True,
-            output_audio=True, max_audio_inputs=2,
+            output_audio=True, max_audio_inputs=3,
         ),
         license=ModelLicenseInfo(
             project_license="MiniMax H3 Community License",

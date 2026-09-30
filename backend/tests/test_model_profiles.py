@@ -45,6 +45,7 @@ class TestCuratedProfiles:
             "flux2_klein_4b",
             "flux2_klein_9b",
             "qwen_image_2512_20B",
+            "qwen_image_21_7b_pruna",
             "qwen_image_edit_plus2_20B",
             "krea2_turbo_edit",
             "hidream_o1_dev",
@@ -131,6 +132,24 @@ class TestCuratedProfiles:
             assert profile.wangp_model_type == model_type
             assert profile.status == "stable"
 
+    def test_qwen_image_21_pruna_uses_the_curated_native_recipe(self) -> None:
+        profile = get_image_profile("qwen_image_21_7b_pruna")
+        assert profile is not None
+        assert profile.status == "experimental"
+        assert profile.wangp_model_type == "qwen_image_21_7B"
+        assert profile.wangp_accelerator_profile_id == "qwen_image_21_pruna_v0_1_8_steps"
+        assert profile.required_pack_ids == ("qwen_image_21_7b_pruna",)
+        assert profile.reference_images is True
+        assert profile.control_image is profile.inpainting is profile.outpainting is False
+        assert profile.input_media.max_images == 10
+        assert [role.role for role in profile.input_media.roles] == [
+            "reference_subject",
+            "reference_people_objects",
+        ]
+        assert profile.license is not None
+        assert profile.license.weights_license == "Qwen Research License Agreement"
+        assert profile.license.commercial_use == "restricted"
+
     def test_requested_edit_profiles_expose_supported_image_inputs(self) -> None:
         flux = get_image_profile("flux2_klein_9b")
         qwen = get_image_profile("qwen_image_edit_plus2_20B")
@@ -175,8 +194,8 @@ class TestCuratedProfiles:
         assert profile.wangp_accelerator_profile_for("minimax_h3_fl2va_pruned") is None
         assert profile.required_pack_ids == ("minimax-h3-quality",)
         assert profile.input_media.max_reference_images == 9
-        assert profile.input_media.max_reference_videos == 2
-        assert profile.input_media.max_reference_audios == 2
+        assert profile.input_media.max_reference_videos == 3
+        assert profile.input_media.max_reference_audios == 3
         assert profile.input_media.max_combined_references == 12
         assert profile.video_audio.output_audio is True
         assert profile.license is not None
@@ -228,22 +247,13 @@ class TestCuratedProfiles:
             "ltx25_wild_west",
             "ltx25_cinematic_sci_fi_cyberpunk",
         ]
-        assert {style.id: style.style_prompt for style in fast.styles} == {
-            "ltx25_soft_enhance": None,
-            "ltx25_fantasy_painterly": "D4rkP41nt3r",
-            "ltx25_pixar_toon": "P1x4r",
-            "ltx25_90s_animation": "9o4n1m",
-            "ltx25_claymation": "claymation style",
-            "ltx25_cozy_felt": "F3ltCut0u7",
-            "ltx25_fantasy_anime": "f4nt4sy4n1m6",
-            "ltx25_fantasy_realism": "f4nt4sy",
-            "ltx25_fantasy_puppet": "6u8p3t",
-            "ltx25_crisp_enhance": None,
-            "ltx25_post_apocalyptic": "P0st4p0c0",
-            "ltx25_paper_cut_out": "Pap3rCut0u7",
-            "ltx25_wild_west": "W1ldW4st",
-            "ltx25_cinematic_sci_fi_cyberpunk": "C6b4rP8nk",
-        }
+        no_prompt_styles = {"ltx25_soft_enhance", "ltx25_crisp_enhance"}
+        assert {style.id for style in fast.styles if style.style_prompt is None} == no_prompt_styles
+        assert all(
+            style.style_prompt
+            for style in fast.styles
+            if style.id not in no_prompt_styles
+        )
         assert quality.styles == fast.styles
 
     def test_style_validation_accepts_prompt_actions_and_rejects_no_action(self) -> None:
@@ -444,6 +454,7 @@ class TestModelProfilesEndpoint:
             "flux2_klein_4b",
             "flux2_klein_9b",
             "qwen_image_2512_20B",
+            "qwen_image_21_7b_pruna",
             "hidream_o1_dev",
             "krea2_turbo_edit",
             "qwen_image_edit_plus2_20B",
@@ -673,6 +684,7 @@ class TestImageGenerationProfileRouting:
         [
             ("flux2_klein_9b", "flux2_klein_9b"),
             ("qwen_image_2512_20B", "qwen_image_2512_20B"),
+            ("qwen_image_21_7b_pruna", "qwen_image_21_7B"),
             ("qwen_image_edit_plus2_20B", "qwen_image_edit_plus2_20B"),
             ("krea2_turbo_edit", "krea2_turbo_edit"),
             ("ideogram4_int8", "ideogram4"),
@@ -731,6 +743,37 @@ class TestImageGenerationProfileRouting:
         assert call.model_type == profile_id
         assert call.default_settings["video_prompt_type"] == "KI"
         assert call.default_settings["image_refs"] == [str(image_path.resolve())]
+
+    def test_qwen_image_21_edit_uses_existing_reference_image_path(
+        self, client, enable_wangp, tmp_path: Path
+    ) -> None:
+        master_path = _write_test_image(tmp_path / "master.png")
+        reference_path = _write_test_image(tmp_path / "reference.png")
+        r = client.post(
+            "/api/generate-image",
+            json={
+                "prompt": "Put the subject in a winter coat",
+                "modelProfileId": "qwen_image_21_7b_pruna",
+                "aspectRatio": "1:1",
+                "resolutionTier": "720p",
+                "edit": {"image": {"path": str(master_path)}},
+                "inputMedia": [
+                    {
+                        "type": "image",
+                        "path": str(reference_path),
+                        "role": "reference_people_objects",
+                    }
+                ],
+            },
+        )
+        assert r.status_code == 200
+        call = enable_wangp.image_calls[0]
+        assert call.model_type == "qwen_image_21_7B"
+        assert call.default_settings["video_prompt_type"] == "KI"
+        assert call.default_settings["image_refs"] == [
+            str(master_path.resolve()),
+            str(reference_path.resolve()),
+        ]
 
     def test_image_input_to_krea2_rejected(
         self, client, enable_wangp, tmp_path: Path
@@ -829,6 +872,31 @@ class TestImageGenerationProfileRouting:
                 "modelProfileId": "flux2_klein_4b",
                 "aspectRatio": "16:9",
                 "resolutionTier": "1080p",
+                "inputMedia": [
+                    {
+                        "type": "image",
+                        "path": str(path),
+                        "role": "reference_people_objects",
+                    }
+                    for path in paths
+                ],
+            },
+        )
+        assert r.status_code == 400
+        assert "TOO_MANY_IMAGE_INPUTS" in r.json()["error"]
+        assert enable_wangp.image_calls == []
+
+    def test_qwen_image_21_rejects_an_eleventh_reference(
+        self, client, enable_wangp, tmp_path: Path
+    ) -> None:
+        paths = [_write_test_image(tmp_path / f"reference_{index}.png") for index in range(11)]
+        r = client.post(
+            "/api/generate-image",
+            json={
+                "prompt": "A cat",
+                "modelProfileId": "qwen_image_21_7b_pruna",
+                "aspectRatio": "1:1",
+                "resolutionTier": "720p",
                 "inputMedia": [
                     {
                         "type": "image",

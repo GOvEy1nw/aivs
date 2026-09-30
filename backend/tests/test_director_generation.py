@@ -147,12 +147,6 @@ def test_director_rejects_uncurated_resolution(client, enable_wangp) -> None:
     assert response.json()["error"].startswith("DIRECTOR_WANGP_MAPPING_UNAVAILABLE:")
 
 
-def test_director_rejects_concurrent_generation(client, enable_wangp, test_state) -> None:
-    test_state.generation.start_generation_job("existing")
-    response = client.post("/api/director/generate", json=_payload())
-    assert response.status_code == 409
-
-
 def test_director_reports_missing_keyframe_asset(client, enable_wangp, tmp_path) -> None:
     payload = _payload()
     segments = payload["promptSegments"]

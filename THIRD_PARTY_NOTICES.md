@@ -1,18 +1,22 @@
 # Third-party notices
 
-## Downloaded WanGP
+## Bundled WanGP
 
-AiVS downloads WanGP/Wan2GP during Windows first-run or repair from the configured
-upstream branch under the WanGP Community License. That licence applies to the runtime
-source; it does not grant rights to optional model assets.
+AiVS releases include a filtered snapshot of official WanGP/Wan2GP source under the
+WanGP Community License. First run copies this bundle into a writable, content-identified
+user-data folder; it does not clone or update runtime source from the network.
+The bundle retains WanGP's `LICENSE.txt` and in-tree component licence material,
+including `THIRD_PARTY_NOTICES.md` and `LICENSES/` when supplied by the source.
+Runtime and dependency licences are separate
+from AiVS's Apache-2.0 licence and do not grant rights to optional model assets.
 
 ## MMAudio processor code
 
-The downloaded WanGP integration includes MMAudio processor code and vendored
-Synchformer and BigVGAN components. Their licence texts ship with the downloaded WanGP
+The bundled WanGP integration includes MMAudio processor code and vendored
+Synchformer and BigVGAN components. Their licence texts ship with the bundled WanGP
 source under `postprocessing/mmaudio/ext/` (including each component's
 `incl_licenses/` directory). AiVS invokes the registered WanGP MMAudio processor locally
-and does not redistribute a second copy.
+without adding a separate implementation.
 
 ## Optional MMAudio checkpoint assets
 

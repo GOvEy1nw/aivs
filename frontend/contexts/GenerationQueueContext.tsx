@@ -127,6 +127,8 @@ type GenerationQueueContextValue = QueueSnapshot & {
   refresh: () => Promise<QueueSnapshot>
 }
 
+export class QueueAdmissionRejectedError extends Error {}
+
 const GenerationQueueContext = createContext<GenerationQueueContextValue | null>(null)
 const EMPTY_SNAPSHOT: QueueSnapshot = { revision: 0, runtimeReady: false, acceptingJobs: false, active: null, queued: [], attention: [] }
 
@@ -532,9 +534,19 @@ export function GenerationQueueProvider({ children }: { children: React.ReactNod
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ schemaVersion: 1, clientRequestId, job: { kind: safeDraft.kind, payload: safeDraft.payload }, summary: safeDraft.summary, clientContext: safeDraft.clientContext }),
       })
-      if (!response.ok) throw await queueError(response, 'Unable to queue generation')
+      if (!response.ok) {
+        const error = await queueError(response, 'Unable to queue generation')
+        if (response.status >= 400 && response.status < 500) {
+          throw new QueueAdmissionRejectedError(error.message)
+        }
+        throw error
+      }
       const admission = await response.json() as { jobId: string; duplicate: boolean }
-      await refresh()
+      try {
+        await refresh()
+      } catch {
+        // The queue owns an admitted job even if its immediate refresh fails.
+      }
       return admission
     })().finally(() => submitInFlight.current.delete(clientRequestId))
     submitInFlight.current.set(clientRequestId, work)

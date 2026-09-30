@@ -49,12 +49,6 @@ class ProfileBinding:
         return model_type in self.selector_by_model_type
 
 
-_H3_MODEL_TYPES = frozenset(
-    {
-        "minimax_h3_fl2va_pruned",
-        "minimax_h3_ref2va_pruned",
-    }
-)
 _LTX_MODEL_TYPES = ("ltx2_25_22B",)
 _LTX_DISTILLED_MODEL_TYPES = ("ltx2_25_22B_distilled",)
 
@@ -130,6 +124,12 @@ PROFILE_BINDINGS: Mapping[str, ProfileBinding] = {
             "qwen_image_edit_plus2_20B": "accelerator_profile:qwen/Lightning Qwen Edit 2511 - 4 Steps.json",
         },
     ),
+    "qwen_image_21_pruna_v0_1_8_steps": ProfileBinding(
+        "accelerator",
+        selector_by_model_type={
+            "qwen_image_21_7B": "accelerator_profile:qwen21/Pruna v0.1 8 Steps.json",
+        },
+    ),
     "textfusionrefusalreductionkrea2": ProfileBinding(
         "preset",
         selector_by_model_type={
@@ -162,6 +162,13 @@ def _runtime_module(session: _WanGPSession) -> _WanGPModule:
     return cast(_WanGPModule, module)
 
 
+def _session_operation(session: _WanGPSession, name: Literal["get_default_settings", "get_model_settings"]) -> Callable[..., object]:
+    operation = getattr(session, name, None)
+    if not callable(operation):
+        raise RuntimeError(f"UNSUPPORTED_WANGP_RUNTIME: missing WanGP session operation '{name}'.")
+    return operation
+
+
 def _profile_content(
     session: _WanGPSession,
     binding: ProfileBinding,
@@ -173,7 +180,7 @@ def _profile_content(
             f"Profile '{profile_id}' is not supported for model_type '{model_type}'."
         )
     selector = binding.selector_by_model_type[model_type]
-    response = session.get_model_settings(model_type, selector)
+    response = _session_operation(session, "get_model_settings")(model_type, selector)
     if not isinstance(response, dict):
         raise RuntimeError(
             f"WanGP get_model_settings returned invalid profile content for '{profile_id}'."
@@ -225,12 +232,12 @@ def resolve_profiles(
     if not model_type.strip():
         raise ValueError("model_type must be a non-empty string")
     if accelerator_profile_id is None and preset_profile_id is None:
-        defaults = session.get_default_settings(model_type)
+        defaults = _session_operation(session, "get_default_settings")(model_type)
         if not isinstance(defaults, dict):
             raise RuntimeError(f"WanGP get_default_settings returned invalid settings for '{model_type}'.")
         return deepcopy(cast(dict[str, object], defaults))
 
-    defaults = session.get_default_settings(model_type)
+    defaults = _session_operation(session, "get_default_settings")(model_type)
     if not isinstance(defaults, dict):
         raise RuntimeError(f"WanGP get_default_settings returned invalid settings for '{model_type}'.")
     effective = deepcopy(cast(dict[str, object], defaults))

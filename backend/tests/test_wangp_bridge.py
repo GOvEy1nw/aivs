@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from PIL import Image
 
 from services.wangp_bridge import (
     CUSTOM_FINETUNE_CHECKPOINT_KEY,
@@ -78,6 +79,137 @@ def _make_bridge(*, image_model_type: str = "z_image") -> WanGPBridge:
         camera_motion_prompts={},
         extra_args=(),
     )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_context_duration"),
+    [("video", 4.5), ("image", None)],
+)
+def test_prompt_enhancer_uses_native_image_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, expected_context_duration: float | None,
+) -> None:
+    bridge = _make_bridge()
+    captured: dict[str, object] = {}
+
+    class FakeImageContext:
+        def __init__(self, images: list[Image.Image], labels: list[str], duration_seconds: float | None) -> None:
+            self.images = images
+            self.labels = labels
+            self.duration_seconds = duration_seconds
+
+    def fake_enhancer(
+        state, model_type, model_def, prompt_enhancer_modes, original_prompts,
+        image_start, original_image_refs, is_image, audio_only, seed, progress, override_profile,
+        *, enhancer_kwargs,
+    ):
+        captured.update(
+            prompt_enhancer_modes=prompt_enhancer_modes,
+            image_start=image_start,
+            image_refs=original_image_refs,
+            is_image=is_image,
+            enhancer_kwargs=enhancer_kwargs,
+        )
+        return [[" enhanced prompt "]]
+
+    module = SimpleNamespace(
+        exec_prompt_enhancer_engine=fake_enhancer,
+        normalize_generated_prompt_lines=lambda prompt, _mode: prompt,
+        get_model_def=lambda _model_type: {"prompt_enhancer_video_duration": True},
+    )
+    session = SimpleNamespace(
+        _state={},
+        _ensure_runtime=lambda: SimpleNamespace(root=tmp_path, module=module),
+    )
+    bridge._get_session = lambda: session  # type: ignore[method-assign]
+    bridge._ensure_local_enhancer_config = lambda _session=None: None  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        "services.wangp_bridge.importlib.import_module",
+        lambda name: SimpleNamespace(ImageContext=FakeImageContext) if name == "shared.prompt_enhancer.images" else None,
+    )
+
+    image_paths = [tmp_path / name for name in ("start.png", "end.png", "ref-1.png", "ref-2.png", "control.png")]
+    for index, path in enumerate(image_paths):
+        Image.new("RGB", (2, 2), color=(index, 0, 0)).save(path)
+
+    result = bridge.enhance_prompt(
+        prompt="a cinematic test",
+        mode=mode,
+        model_type="ltx2_25_22B_distilled",
+        image_path=str(image_paths[0]),
+        end_image_path=str(image_paths[1]),
+        reference_image_paths=[str(image_paths[2]), str(image_paths[3])],
+        control_image_path=str(image_paths[4]),
+        duration_seconds=4.5,
+    )
+
+    assert result == "enhanced prompt"
+    assert captured["prompt_enhancer_modes"] == "TI"
+    assert captured["is_image"] is (mode == "image")
+    context = cast(FakeImageContext, cast(dict[str, object], captured["enhancer_kwargs"])["image_contexts"][0])
+    assert context.labels == ["start image", "end image", "Image reference no 1", "Image reference no 2", "Control Image"]
+    assert context.duration_seconds == expected_context_duration
+    kwargs = cast(dict[str, object], captured["enhancer_kwargs"])
+    assert kwargs["image_prompt_type"] == "SE"
+    assert kwargs["video_prompt_type"] == "IV"
+    assert kwargs["control_image"] is context.images[-1]
+    assert kwargs.get("duration_seconds") is None
+    assert kwargs.get("video_duration_seconds") == (4.5 if mode == "video" else None)
+    assert captured["image_start"] == [context.images[0]]
+    assert captured["image_refs"] == context.images[2:4]
+
+
+def test_prompt_enhancer_passes_native_duration_for_text_only_video(tmp_path: Path) -> None:
+    bridge = _make_bridge()
+    captured: dict[str, object] = {}
+
+    def fake_enhancer(
+        state, model_type, model_def, prompt_enhancer_modes, original_prompts,
+        image_start, original_image_refs, is_image, audio_only, seed, progress, override_profile,
+        *, enhancer_kwargs,
+    ):
+        captured["prompt_enhancer_modes"] = prompt_enhancer_modes
+        captured["enhancer_kwargs"] = enhancer_kwargs
+        return [["enhanced prompt"]]
+
+    module = SimpleNamespace(
+        exec_prompt_enhancer_engine=fake_enhancer,
+        normalize_generated_prompt_lines=lambda prompt, _mode: prompt,
+        get_model_def=lambda _model_type: {"prompt_enhancer_video_duration": True},
+    )
+    session = SimpleNamespace(
+        _state={},
+        _ensure_runtime=lambda: SimpleNamespace(root=tmp_path, module=module),
+    )
+    bridge._get_session = lambda: session  # type: ignore[method-assign]
+    bridge._ensure_local_enhancer_config = lambda _session=None: None  # type: ignore[method-assign]
+
+    assert bridge.enhance_prompt(
+        prompt="a cinematic test", mode="video", model_type="ltx2_25_22B_distilled", duration_seconds=4.5,
+    ) == "enhanced prompt"
+    assert captured["prompt_enhancer_modes"] == "T"
+    kwargs = cast(dict[str, object], captured["enhancer_kwargs"])
+    assert "image_contexts" not in kwargs
+    assert kwargs["video_duration_seconds"] == 4.5
+
+
+def test_compose_music_lyrics_keeps_audio_prompt_enhancer_inputs() -> None:
+    bridge = _make_bridge()
+    captured: dict[str, object] = {}
+
+    def fake_run_prompt_enhancer(**kwargs: object) -> str:
+        captured.update(kwargs)
+        return "[Verse]\\nLocal lyrics"
+
+    bridge._run_prompt_enhancer = fake_run_prompt_enhancer  # type: ignore[method-assign]
+
+    assert bridge.compose_music_lyrics(
+        description="A warm ambient song", lyrics_prompt=None, language="en", duration_seconds=120,
+        model_type="ace_step_v1_5", think=True, seed=17,
+    ) == "[Verse]\\nLocal lyrics"
+    assert captured["mode"] == "audio"
+    assert captured["image_path"] is None
+    assert captured["think"] is True
+    assert captured["seed"] == 17
 
 
 def test_configured_checkpoints_directory_updates_wangp_config(tmp_path: Path) -> None:
@@ -244,6 +376,16 @@ def test_generate_speech_uses_wangp_defaults_and_curated_inputs(tmp_path: Path) 
         on_progress=lambda *_args: None,
         is_cancelled=lambda: False,
     )
+    bridge.generate_speech(
+        text="Speaker 1: One\nSpeaker 2: Two\nSpeaker 3: Three",
+        model_type="index_tts25",
+        default_settings={"audio_prompt_type": "A", "model_mode": "EN"},
+        reference_audio_paths=[str(reference), str(tmp_path / "second.wav"), str(tmp_path / "third.wav")],
+        enhance_prompt=False,
+        seed=None,
+        on_progress=lambda *_args: None,
+        is_cancelled=lambda: False,
+    )
 
     assert manifests[0][0]["params"] == {
         "audio_prompt_type": "",
@@ -264,6 +406,17 @@ def test_generate_speech_uses_wangp_defaults_and_curated_inputs(tmp_path: Path) 
         "audio_guide": str(reference.resolve()),
         "audio_guide2": str((tmp_path / "second.wav").resolve()),
         "prompt_enhancer": "T",
+    }
+    assert manifests[2][0]["params"] == {
+        "audio_prompt_type": "ABD2",
+        "duration_seconds": 0,
+        "model_type": "index_tts25",
+        "model_mode": "EN",
+        "prompt": "Speaker 1: One\nSpeaker 2: Two\nSpeaker 3: Three",
+        "audio_guide": str(reference.resolve()),
+        "audio_guide2": str((tmp_path / "second.wav").resolve()),
+        "audio_guide3": str((tmp_path / "third.wav").resolve()),
+        "prompt_enhancer": "",
     }
 
 
@@ -364,6 +517,39 @@ def test_runtime_preferences_update_app_owned_wangp_config(tmp_path: Path, monke
     assert saved["audio_profile"] == 3.5
     assert saved["vae_config"] == 0
     assert saved["boost"] == 1
+
+
+def test_local_enhancer_config_preserves_existing_engine_profiles(tmp_path: Path) -> None:
+    bridge = _make_bridge()
+    bridge._config_dir = tmp_path / "config"
+    config_path = bridge._resolve_session_config_path()
+    config_path.parent.mkdir()
+    config_path.write_text(
+        json.dumps({"llm_engines": {"deepy": "remote", "profiles": {"custom": {"key": "kept"}}}}),
+        encoding="utf-8",
+    )
+
+    bridge._ensure_local_enhancer_config()
+
+    engines = json.loads(config_path.read_text(encoding="utf-8"))["llm_engines"]
+    assert engines["deepy"] == "qwen35_4b"
+    assert engines["profiles"] == {"custom": {"key": "kept"}}
+
+
+def test_wait_for_job_uses_structured_errors_when_stream_has_none() -> None:
+    bridge = _make_bridge()
+    error = SimpleNamespace(stage="inference", message="native failure")
+    job = SimpleNamespace(
+        cancel=lambda: None,
+        events=SimpleNamespace(get=lambda **_kwargs: None),
+        done=True,
+        result=lambda: SimpleNamespace(success=False, errors=[error], generated_files=[]),
+    )
+
+    with pytest.raises(RuntimeError, match="inference: native failure"):
+        bridge._wait_for_job(
+            job=job, media_suffixes={".png"}, on_progress=lambda *_args: None, is_cancelled=lambda: False,
+        )
 
 
 def test_custom_loras_directory_updates_wangp_config(tmp_path: Path) -> None:
@@ -479,14 +665,7 @@ def test_video_manifest_does_not_send_fork_preview_options(model_type: str) -> N
 def test_video_manifest_keeps_preview_options_out_of_the_manifest() -> None:
     bridge = _make_bridge()
     captured: dict[str, object] = {}
-    bridge.set_preview_options(
-        mode="off",
-        update_rate="every_2",
-        device="cpu",
-        max_edge=768,
-        preview_fps=8,
-        webp_quality=85,
-    )
+    bridge.set_preview_options(mode="rgb")
 
     def fake_run_manifest(*, manifest, media_suffixes, on_progress, is_cancelled):  # type: ignore[no-untyped-def]
         captured["manifest"] = manifest
@@ -503,18 +682,11 @@ def test_video_manifest_keeps_preview_options_out_of_the_manifest() -> None:
     assert captured["manifest"][0]["plugin_data"] == {}
 
 
-@pytest.mark.parametrize("mode", ["tae", "off"])
+@pytest.mark.parametrize("mode", ["rgb", "tiny_vae_video"])
 def test_image_manifest_keeps_preview_options_out_of_the_manifest(mode: str) -> None:
     bridge = _make_bridge()
     captured: dict[str, object] = {}
-    bridge.set_preview_options(
-        mode=mode,
-        update_rate="adaptive",
-        device="auto",
-        max_edge=512,
-        preview_fps=16,
-        webp_quality=72,
-    )
+    bridge.set_preview_options(mode=mode)
 
     def fake_run_manifest(*, manifest, media_suffixes, on_progress, is_cancelled):  # type: ignore[no-untyped-def]
         captured["manifest"] = manifest
@@ -531,7 +703,7 @@ def test_image_manifest_keeps_preview_options_out_of_the_manifest(mode: str) -> 
 
 @pytest.mark.parametrize(
     ("mode", "expected"),
-    [("tae", "tiny_vae_video"), ("tiny_vae_frames", "tiny_vae_frames"), ("tiny_vae_video", "tiny_vae_video"), ("rgb", "rgb"), ("off", "rgb")],
+    [("tiny_vae_frames", "tiny_vae_frames"), ("tiny_vae_video", "tiny_vae_video"), ("rgb", "rgb")],
 )
 def test_run_manifest_applies_changed_preview_mode_on_first_load(
     tmp_path: Path, mode: str, expected: str,
@@ -539,7 +711,7 @@ def test_run_manifest_applies_changed_preview_mode_on_first_load(
     bridge = _make_bridge()
     bridge._output_dir = tmp_path / "outputs"
     bridge._config_dir = tmp_path / "config"
-    bridge.set_preview_options(mode=mode, update_rate="adaptive", device="auto", max_edge=512, preview_fps=16, webp_quality=72)
+    bridge.set_preview_options(mode=mode)
     server_config: dict[str, object] = {}
     closes: list[None] = []
     session = SimpleNamespace(
@@ -560,12 +732,38 @@ def test_run_manifest_applies_changed_preview_mode_on_first_load(
     assert closes == [None]
 
 
+def test_run_manifest_moves_output_preferences_to_runtime_config(tmp_path: Path) -> None:
+    bridge = _make_bridge()
+    bridge._output_dir = tmp_path / "outputs"
+    bridge._config_dir = tmp_path / "config"
+    server_config: dict[str, object] = {}
+    submitted: list[list[dict[str, object]]] = []
+    session = SimpleNamespace(
+        _state={"gen": {}},
+        _ensure_runtime=lambda: SimpleNamespace(module=SimpleNamespace(server_config=server_config)),
+        submit_manifest=lambda manifest: submitted.append(manifest) or object(),
+        close=lambda: None,
+    )
+    bridge._get_session = lambda: session  # type: ignore[method-assign]
+    bridge._wait_for_job = lambda **_kwargs: ["E:/tmp/out.png"]  # type: ignore[method-assign]
+
+    bridge._run_manifest(
+        manifest=[{"id": 1, "params": {"model_type": "flux2_klein_4b", "image_output_codec": "png", "metadata_type": "metadata"}, "plugin_data": {}}],
+        media_suffixes={".png"}, on_progress=lambda *_args: None, is_cancelled=lambda: False,
+    )
+
+    assert server_config["image_output_codec"] == "png"
+    assert server_config["metadata_type"] == "metadata"
+    assert server_config["generation_preview"] == "tiny_vae_video"
+    assert submitted[0][0]["params"] == {"model_type": "flux2_klein_4b"}
+
+
 def test_run_manifest_closes_cached_session_before_preview_mode_change(tmp_path: Path) -> None:
     bridge = _make_bridge()
     bridge._output_dir = tmp_path / "outputs"
     bridge._config_dir = tmp_path / "config"
     bridge._submitted_manifest_once = True
-    bridge.set_preview_options(mode="tiny_vae_frames", update_rate="adaptive", device="auto", max_edge=512, preview_fps=16, webp_quality=72)
+    bridge.set_preview_options(mode="tiny_vae_frames")
     server_config: dict[str, object] = {"generation_preview": "rgb"}
     closes: list[None] = []
     session = SimpleNamespace(
@@ -701,10 +899,12 @@ def test_h3_video_maps_list_valued_references_to_wangp_manifest() -> None:
         resolution_label="720p", aspect_ratio="16:9", duration_seconds=5,
         fps=24, steps=20, seed=None, camera_motion="none", negative_prompt="",
         image_path=None, audio_path=None, model_type="minimax_h3_ref2va_pruned",
-        video_prompt_type="V-", audio_prompt_type="A",
+        video_prompt_type="V+*-U", audio_prompt_type="ABD",
         reference_image_paths=["E:/tmp/ref.png"],
-        reference_video_paths=["E:/tmp/ref.mp4"],
-        reference_audio_paths=["E:/tmp/ref.wav"],
+        reference_video_paths=["E:/tmp/ref.mp4", "E:/tmp/ref2.mp4", "E:/tmp/ref3.mp4"],
+        reference_audio_paths=["E:/tmp/ref.wav", "E:/tmp/ref2.wav", "E:/tmp/ref3.wav"],
+        h3_video_excerpt_positions=["3s/2s"],
+        h3_audio_excerpt_positions=["4s/3s"],
         on_progress=lambda *_args: None, is_cancelled=lambda: False,
     )
 
@@ -712,7 +912,13 @@ def test_h3_video_maps_list_valued_references_to_wangp_manifest() -> None:
     assert settings["video_length"] == 124
     assert settings["image_refs"] == [str(Path("E:/tmp/ref.png").resolve())]
     assert settings["video_guide"] == str(Path("E:/tmp/ref.mp4").resolve())
+    assert settings["video_guide3"] == str(Path("E:/tmp/ref3.mp4").resolve())
     assert settings["audio_guide"] == str(Path("E:/tmp/ref.wav").resolve())
+    assert settings["audio_guide3"] == str(Path("E:/tmp/ref3.wav").resolve())
+    assert settings["custom_settings"] == {
+        "h3_video_excerpt_positions": "3s/2s",
+        "h3_audio_excerpt_positions": "4s/3s",
+    }
 
 
 def test_h3_depth_video_reuses_its_path_for_soundtrack() -> None:

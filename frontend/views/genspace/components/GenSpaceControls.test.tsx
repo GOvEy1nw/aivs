@@ -20,6 +20,10 @@ vi.mock("../../../contexts/AppSettingsContext", () => ({
   }),
 }));
 
+vi.mock("../../../components/SidebarUtilityButtons", () => ({
+  SidebarUtilityButtons: () => null,
+}));
+
 afterEach(cleanup);
 
 describe("GenSpace shared controls", () => {
@@ -150,6 +154,7 @@ describe("GenSpace shared controls", () => {
       <MusicMediaInputs
         coverInput={null}
         referenceTimbreInput={null}
+        profile={{ music: { supportsCover: true, supportsReferenceTimbre: true } } as ModelProfile}
         coverStrength={100}
         onInputChange={onInputChange}
         onCoverStrengthChange={vi.fn()}
@@ -407,11 +412,11 @@ describe("GenSpace shared controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change @video1 usage" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Depth" }));
     fireEvent.click(screen.getByRole("button", { name: "Change @video1 usage" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Use Audio Track" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Use Audio as Reference" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Reference" }));
     fireEvent.click(screen.getByRole("button", { name: "Change @video2 usage" }));
 
-    expect((screen.getByRole("checkbox", { name: "Use Audio Track" }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("checkbox", { name: "Use Audio as Reference" }) as HTMLInputElement).checked).toBe(false);
   });
 
   it("replaces the active @ token from the keyboard and opens media add commands", async () => {
@@ -536,6 +541,7 @@ describe("GenSpace shared controls", () => {
           role: "cover",
         }}
         referenceTimbreInput={null}
+        profile={{ music: { supportsCover: true } } as ModelProfile}
         coverStrength={100}
         onInputChange={onInputChange}
         onCoverStrengthChange={vi.fn()}

@@ -33,7 +33,7 @@ describe("VideoModeTabs", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose tool" }));
     const retake = screen.getByRole("button", { name: "Retake: No compatible installed model is available." });
     expect((retake as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Relight: No compatible installed model is available." }) as HTMLButtonElement).disabled).toBe(true);
@@ -42,15 +42,15 @@ describe("VideoModeTabs", () => {
     expect(onChange).toHaveBeenCalledWith("reframe");
     expect(onToolChange).toHaveBeenCalledWith("extend");
 
-    const trigger = screen.getByRole("button", { name: "Choose mode" });
+    const trigger = screen.getByRole("button", { name: "Choose tool" });
     fireEvent.click(trigger);
-    expect(screen.getByRole("dialog", { name: "Tools catalogue" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Tool catalogue" })).toBeTruthy();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Tools catalogue" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Tool catalogue" })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(trigger));
 
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("button", { name: "Close Tools catalogue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Tool catalogue" }));
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 });

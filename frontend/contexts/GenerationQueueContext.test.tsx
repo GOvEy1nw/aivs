@@ -44,6 +44,26 @@ describe('GenerationQueueProvider', () => {
     unmount()
   })
 
+  it('keeps an admitted job when its immediate queue refresh fails', async () => {
+    let queueLoads = 0
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/api/generation/queue')) {
+        queueLoads += 1
+        if (queueLoads > 1) throw new Error('refresh unavailable')
+        return new Response(JSON.stringify(queue), { status: 200 })
+      }
+      if (url.endsWith('/api/generation/jobs')) return new Response(JSON.stringify({ jobId: 'job-accepted', duplicate: false }), { status: 202 })
+      throw new Error(`Unexpected request ${url}`)
+    })
+    const { result, unmount } = renderHook(() => useGenerationQueue(), { wrapper: GenerationQueueProvider })
+    await waitFor(() => expect(result.current.runtimeReady).toBe(true))
+
+    const admission = await result.current.submit({ clientRequestId: 'accepted', kind: 'image.generate', payload: { prompt: 'image' }, summary: { label: 'Image', mediaKind: 'image', operation: 'image.generate' }, clientContext: { schemaVersion: 1, projectId: 'project' } })
+
+    expect(admission).toEqual({ jobId: 'job-accepted', duplicate: false })
+    unmount()
+  })
+
   it('persists a queued retake as a provenance-tagged take before acknowledgement', async () => {
     projects.projects = [{ id: 'project', name: 'Project', createdAt: 1, updatedAt: 1, timelines: [], assets: [{ id: 'asset-1', type: 'video', path: 'C:\\source.mp4', url: 'file:///C:/source.mp4', prompt: '', resolution: '', createdAt: 1 }] }]
     const addTake = vi.mocked(projects.addTakeToAsset)

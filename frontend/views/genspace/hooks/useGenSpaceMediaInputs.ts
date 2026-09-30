@@ -4,7 +4,6 @@ import { getNativeFilePath } from "../../../lib/native-file-path";
 import type { GenSpaceMediaInput } from "../types";
 
 export function useGenSpaceMediaInputs() {
-  const [prompt, setPrompt] = useState("");
   const [inputImage, setInputImage] = useState<string | null>(null);
   const [inputAudio, setInputAudio] = useState<string | null>(null);
   const [imageInputs, setImageInputs] = useState<GenSpaceMediaInput[]>([]);
@@ -36,8 +35,6 @@ export function useGenSpaceMediaInputs() {
   );
 
   return {
-    prompt,
-    setPrompt,
     inputImage,
     setInputImage,
     inputAudio,

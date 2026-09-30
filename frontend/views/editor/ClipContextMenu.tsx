@@ -818,6 +818,8 @@ function SingleClipMenu({
                 icon={Film}
                 iconClass="text-blue-400"
                 label="Retake Section"
+                disabled
+                title="Retake is not supported by the current local runtime."
                 onClick={() => {
                   onRetakeClip(contextClip);
                   close();

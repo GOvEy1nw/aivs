@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { logger } from "../../../lib/logger";
 
 export const MIN_TRIM_DURATION = 2;
+const KEYBOARD_TRIM_STEP = 0.1;
 
 export interface VideoTrimState {
   selStart: number;
@@ -253,6 +254,38 @@ export function VideoTrimPanel({
     [draggingHandle, onSeek, videoDuration],
   );
 
+  const handleTrimHandleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>, handle: "start" | "end") => {
+      const current = handle === "start" ? selStart : selEnd;
+      let next: number;
+      switch (event.key) {
+        case "ArrowLeft":
+        case "ArrowDown":
+          next = current - KEYBOARD_TRIM_STEP;
+          break;
+        case "ArrowRight":
+        case "ArrowUp":
+          next = current + KEYBOARD_TRIM_STEP;
+          break;
+        case "Home":
+          next = handle === "start" ? 0 : selStart + MIN_TRIM_DURATION;
+          break;
+        case "End":
+          next = handle === "start" ? selEnd - MIN_TRIM_DURATION : videoDuration;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      if (handle === "start") {
+        setSelStart(Math.max(0, Math.min(selEnd - MIN_TRIM_DURATION, next)));
+      } else {
+        setSelEnd(Math.min(videoDuration, Math.max(selStart + MIN_TRIM_DURATION, next)));
+      }
+    },
+    [selEnd, selStart, videoDuration],
+  );
+
   if (!videoUrl || videoDuration <= 0) return null;
 
   const selStartFrac = selStart / videoDuration;
@@ -353,12 +386,20 @@ export function VideoTrimPanel({
           />
 
           <div
-            className="absolute top-0 bottom-0 cursor-ew-resize z-20 group"
+            className="absolute top-0 bottom-0 cursor-ew-resize z-20 group focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
             style={{
               left: `calc(${selStartFrac * 100}% - 6px)`,
               width: "20px",
             }}
+            role="slider"
+            tabIndex={0}
+            aria-label="Excerpt start"
+            aria-valuemin={0}
+            aria-valuemax={Math.max(0, selEnd - MIN_TRIM_DURATION)}
+            aria-valuenow={selStart}
+            aria-valuetext={formatTimecode(selStart)}
             onMouseDown={(e) => handleFilmstripMouseDown(e, "start")}
+            onKeyDown={(event) => handleTrimHandleKeyDown(event, "start")}
           >
             <div
               className="absolute top-0 bottom-0 bg-violet-500 group-hover:bg-violet-400 transition-colors"
@@ -367,9 +408,17 @@ export function VideoTrimPanel({
           </div>
 
           <div
-            className="absolute top-0 bottom-0 cursor-ew-resize z-20 group"
+            className="absolute top-0 bottom-0 cursor-ew-resize z-20 group focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
             style={{ left: `calc(${selEndFrac * 100}% - 14px)`, width: "20px" }}
+            role="slider"
+            tabIndex={0}
+            aria-label="Excerpt end"
+            aria-valuemin={Math.min(videoDuration, selStart + MIN_TRIM_DURATION)}
+            aria-valuemax={videoDuration}
+            aria-valuenow={selEnd}
+            aria-valuetext={formatTimecode(selEnd)}
             onMouseDown={(e) => handleFilmstripMouseDown(e, "end")}
+            onKeyDown={(event) => handleTrimHandleKeyDown(event, "end")}
           >
             <div
               className="absolute top-0 bottom-0 bg-violet-500 group-hover:bg-violet-400 transition-colors"

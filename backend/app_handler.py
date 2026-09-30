@@ -86,11 +86,6 @@ class AppHandler:
         preview_settings = self.state.app_settings.preview_settings
         self.wangp_bridge.set_preview_options(
             mode=preview_settings.mode,
-            update_rate=preview_settings.update_rate,
-            device=preview_settings.device,
-            max_edge=preview_settings.max_edge,
-            preview_fps=preview_settings.preview_fps,
-            webp_quality=preview_settings.webp_quality,
         )
 
         self.generation = GenerationHandler(state=self.state, lock=self._lock)
@@ -170,9 +165,7 @@ class AppHandler:
             wangp_bridge=self.wangp_bridge,
         )
 
-        self.retake = RetakeHandler(
-            video_generation=self.video_generation,
-        )
+        self.retake = RetakeHandler()
 
         self.model_profiles = ModelProfilesHandler(
             state=self.state,

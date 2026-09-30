@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createVideoSequenceDraft } from "../logic/video-prompt-composer";
 import type { VideoComposerStateV1, VideoSequenceScene, VideoSequenceShot } from "../../../types/video-composer";
+import type { ReferenceEntity } from "../../../../shared/reference-library";
+import { snapshotReferenceEntity } from "../logic/video-prompt-composer";
 
 function createDefaultComposer(): VideoComposerStateV1 {
   return { schemaVersion: 1, mode: "simple", sequence: createVideoSequenceDraft() };
@@ -31,6 +33,19 @@ export function useVideoComposerState(projectId: string | null, persisted: Video
   const setMode = useCallback((mode: VideoComposerStateV1["mode"]) => update((current) => ({ ...current, mode })), [update]);
   const updateScene = useCallback((sceneId: string, patch: Partial<VideoSequenceScene>) => update((current) => ({ ...current, sequence: { ...current.sequence, scenes: current.sequence.scenes.map((scene) => scene.id === sceneId ? { ...scene, ...patch } : scene) } })), [update]);
   const updateShot = useCallback((sceneId: string, shotId: string, patch: Partial<VideoSequenceShot>) => update((current) => ({ ...current, sequence: { ...current.sequence, scenes: current.sequence.scenes.map((scene) => scene.id !== sceneId ? scene : { ...scene, shots: scene.shots.map((shot) => shot.id === shotId ? { ...shot, ...patch } : shot) }) } })), [update]);
+  const selectLocation = useCallback((sceneId: string, location: Extract<ReferenceEntity, { kind: "location" }>) => update((current) => ({
+    ...current,
+    sequence: {
+      ...current.sequence,
+      scenes: current.sequence.scenes.map((scene) => scene.id === sceneId
+        ? { ...scene, location: location.name, locationEntityId: location.id }
+        : scene),
+    },
+    referencedEntities: [
+      ...(current.referencedEntities ?? []).filter((entity) => entity.id !== location.id),
+      snapshotReferenceEntity(location),
+    ],
+  })), [update]);
   const addScene = useCallback(() => update((current) => ({ ...current, sequence: { ...current.sequence, scenes: [...current.sequence.scenes, createVideoSequenceDraft().scenes[0]] } })), [update]);
   const addShot = useCallback((sceneId: string) => update((current) => ({ ...current, sequence: { ...current.sequence, scenes: current.sequence.scenes.map((scene) => scene.id !== sceneId ? scene : { ...scene, shots: [...scene.shots, createVideoSequenceDraft().scenes[0].shots[0]] }) } })), [update]);
   const removeScene = useCallback((sceneId: string) => update((current) => ({ ...current, sequence: { ...current.sequence, scenes: current.sequence.scenes.length === 1 ? createVideoSequenceDraft().scenes : current.sequence.scenes.filter((scene) => scene.id !== sceneId) } })), [update]);
@@ -54,5 +69,5 @@ export function useVideoComposerState(projectId: string | null, persisted: Video
     shots.splice(to, 0, shot);
     return { ...scene, shots };
   }) } })), [update]);
-  return useMemo(() => ({ projectId, value: currentValue, restore, setMode, updateScene, updateShot, addScene, addShot, removeScene, removeShot, moveScene, moveShot }), [projectId, currentValue, restore, setMode, updateScene, updateShot, addScene, addShot, removeScene, removeShot, moveScene, moveShot]);
+  return useMemo(() => ({ projectId, value: currentValue, restore, setMode, updateScene, updateShot, selectLocation, addScene, addShot, removeScene, removeShot, moveScene, moveShot }), [projectId, currentValue, restore, setMode, updateScene, updateShot, selectLocation, addScene, addShot, removeScene, removeShot, moveScene, moveShot]);
 }

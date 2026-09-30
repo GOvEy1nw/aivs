@@ -558,6 +558,8 @@ describe("GenSpace settings restoration", () => {
       policy: { promptFormat: "plain", entityMediaMode: "inline-reference", voiceReference: true },
       retainedRoles: plan.media.imageInputs.map((input) => input.role),
     });
-    expect(compiled.entityInputs.filter((input) => input.role === "reference_audio")).toHaveLength(2);
+    expect(compiled.ok).toBe(false);
+    expect(compiled.error).toMatch(/no verified speaker-to-audio binding/);
+    expect(composer.referencedEntities.map((entity) => entity.voiceReference.path)).toEqual([bethVoice.path, samVoice.path]);
   });
 });

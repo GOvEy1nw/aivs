@@ -1,8 +1,8 @@
-<p align="center"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/public/AiVS_Logo_White.png" width="200"></p>
+<p align="center"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/public/AiVS_Logo_White.png" width="200"></p>
 <p align="center">AI Video Studio</p>
 <p align="center">A local-only desktop app for AI image and video generation<br>powered by WanGP.</p>
 
-<p align="center"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/GenSpace.png" width="80%"></p>
+<p align="center"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/GenSpace.png" width="80%"></p>
 
 This WIP project is a fork `deepbeepmeep/LTX-Desktop-WanGP`.
 
@@ -25,7 +25,7 @@ AiVS is in active development. Director Mode V1 is available as a standalone wor
 - Settings:
 	- Added video/image output settings (Settings > Outputs)
 	- Added Model Manager: optional WanGP model packs, approximate sizes, status, download and cancel controls.
-	- Removed most other settings, but kept 'Torch-Compile' option and ensured it's hooked into WanGP. <p align="center"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/NewSettings.png" width="40%"></p>
+	- Removed most other settings, but kept 'Torch-Compile' option and ensured it's hooked into WanGP. <p align="center"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/NewSettings.png" width="40%"></p>
 - First run:
 	- Bundled Python, pip and uv automatically install the compatible WanGP GPU runtime.
 	- Optional model-pack selection has live transfer status and can be skipped for automatic download on first use.
@@ -34,25 +34,25 @@ AiVS is in active development. Director Mode V1 is available as a standalone wor
 	- Added ability to drag and drop your own items into gallery (for easier access to regular references etc)
 	- Added Filtering (Type: Image/Video/Audio. Source: Generated/Uploaded)
 	- Added 'Bin' (folder) support so you can easily organise your assets
-	- Added 'List' view as an alternative to the grid views. <p align="center"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/NewFilters_NewBins.png" width="40%"></p>
-  - Added a 'cancel' button and better indications of generation progress in asset cards.<p align="center"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/AssetCardDeets01.png" width="25%"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/AssetCardDeets02.png" width="25%"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/AssetCardDeets03.png" width="25%"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/AssetCardDeets04.png" width="25%"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/AssetCardDeets05.png" width="25%"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/AssetCardDeets06.png" width="25%"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/AssetCardDeets07.png" width="25%"></p>
+	- Added 'List' view as an alternative to the grid views. <p align="center"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/NewFilters_NewBins.png" width="40%"></p>
+  - Added a 'cancel' button and better indications of generation progress in asset cards.<p align="center"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/AssetCardDeets01.png" width="25%"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/AssetCardDeets02.png" width="25%"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/AssetCardDeets03.png" width="25%"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/AssetCardDeets04.png" width="25%"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/AssetCardDeets05.png" width="25%"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/AssetCardDeets06.png" width="25%"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/AssetCardDeets07.png" width="25%"></p>
 - GenSpace:
 	- Prompting:
 		- Added seed lock button to prompt box
 		- added enhance prompt button to prompt box
-		- moved media inputs above text prompt area and made it collapsible for tidier working. <p align="center"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/PromptArea.png" width="80%"></p>
+		- moved media inputs above text prompt area and made it collapsible for tidier working. <p align="center"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/PromptArea.png" width="80%"></p>
 	- Image Gen:
 		- Added Additional Image Models: Flux2 Klein 4b, Krea2 Turbo & HiDream O1, plus the existing z-image-turbo.
 		- Added support for input images for supporting models, including a dropdown menu to select reference type (Transfer Human Pose, Transfer Depth, Transfer Canny Edges etc):
 			- Z-Image-Turbo: Technically doesn't support inputs, but I've routed it so if you add one it'll use Z-Image-Turbo Fun ControlNet 6B v2.1 instead which can accept a controlnet image.
 			- Flux2 Klein 4b natively allows reference images, I've allows up to 5, which I think is a sane amount (not sure how many it can take).
 			- Krea2 Turbo currently doesn't support input images
-			- HiDream O1 natively allows reference images, I've allows up to 5, which I think is a sane amount (not sure how many it can take). <p align="center"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/NewImageModelOptions.png" width="80%"></p>
+			- HiDream O1 natively allows reference images, I've allows up to 5, which I think is a sane amount (not sure how many it can take). <p align="center"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/NewImageModelOptions.png" width="80%"></p>
 	- Video Gen:
 		- Added Start/End frame support
 		- Added Control Video/Audio support with video trim capabilities (note when a control video is added, the 'duration' setting turns to 'auto' and is controlled by the trim length).
 		- Retake is visible as **Retake (soon)** but disabled until WanGP supports it reliably.
-		- Added new reframe mode with a nice easy to use framing UI that takes a control video and then uses ltx outpaint lora to expand edges. <p align="center"><img src="https://github.com/GOvEy1nw/AI-Video-Studio/blob/main/images/NewReframeVideoMode.png" width="80%"></p>
+		- Added new reframe mode with a nice easy to use framing UI that takes a control video and then uses ltx outpaint lora to expand edges. <p align="center"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/NewReframeVideoMode.png" width="80%"></p>
 - Director Mode:
 	- Added a standalone workspace between GenSpace and Video Editor with the shared asset library, multiple Director timelines, contextual segment settings, preview playback and a frame-based timeline.
 	- Build videos from movable and resizable prompt segments, optional local/global prompts, key frames pinned to Start/Middle/End, or a frame-zero Continue Video segment. Gaps, segment reordering, ripple resizing and contextual split/delete are supported.
@@ -211,7 +211,7 @@ AiVS has three main layers:
 
 ```mermaid
 graph TD
-  UI["Renderer: React + TypeScript"] -->|HTTP localhost:8000| BE["Backend: FastAPI + Python"]
+  UI["Renderer: React + TypeScript"] -->|Authenticated local HTTP| BE["Backend: FastAPI + Python"]
   UI -->|IPC via preload| EL["Electron main"]
   EL --> OS["OS integration: files, dialogs, ffmpeg, process management"]
   BE --> WGP["WanGP / Wan2GP bridge"]
@@ -223,7 +223,10 @@ graph TD
 
 - Path: `frontend/`
 - React 19, TypeScript 6, Vite 8, Tailwind CSS 4
-- Main GenSpace surface: `frontend/views/GenSpace.tsx`
+- Quick Gen composition: `frontend/views/genspace/GenSpaceWorkspace.tsx`
+- Draft state and orchestration: `frontend/views/genspace/hooks/useGenSpaceController.tsx`
+- Queue lifecycle and project-scoped result persistence: `frontend/contexts/GenerationQueueContext.tsx`
+- Draft submission: `frontend/hooks/use-generation.ts`
 - Model profile hook: `frontend/hooks/use-image-profiles.ts`
 - Model profile types: `frontend/types/model-profiles.ts`
 
@@ -236,7 +239,7 @@ graph TD
 ### Backend
 
 - Path: `backend/`
-- FastAPI server on port 8000
+- Local FastAPI server; the renderer uses the Electron-provided URL and session token through `backendFetch()`
 - Thin routes call handlers; handlers call services and mutate centralized state
 - WanGP bridge: `backend/services/wangp_bridge.py`
 - Model profiles: `backend/model_profiles/profiles.py`
@@ -258,6 +261,9 @@ graph TD
 | `pnpm build:frontend`             | Build renderer and Electron bundles              |
 | `pnpm setup:dev:win`              | Windows development setup                        |
 | `pnpm setup:dev:linux`            | Linux development setup                          |
+| `pnpm wangp:check`               | Inspect source location and required files without modifying it |
+| `pnpm wangp:validate`            | Source check and focused source/root tests; no GPU inference |
+| `pnpm wangp:validate:full`        | The same checks plus TypeScript/Python checks and frontend/Electron bundling |
 | `scripts/install-wangp-stack.ps1` | Install/refresh WanGP GPU stack                  |
 
 ## Data Locations
@@ -290,4 +296,6 @@ Before adding a model, add or update a curated profile in the backend profile re
 
 Apache-2.0. See `LICENSE.txt`.
 
-Third-party notices and model terms may apply to downloaded models and WanGP dependencies.
+The bundled WanGP source and dependencies retain their own licences; see
+`THIRD_PARTY_NOTICES.md`. Model weights have separate terms. Source checks, contract
+tests and a successful bundle do not establish successful GPU generation.

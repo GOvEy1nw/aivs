@@ -1,7 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { UseGenerationReturn } from "../../../hooks/use-generation";
+import { QueueAdmissionRejectedError } from "../../../contexts/GenerationQueueContext";
 import type { ImageEditToolMode } from "../../../types/image-edit";
+import type { ModelProfile } from "../../../types/model-profiles";
+import type { ReferenceEntity } from "../../../../shared/reference-library";
 import { DEFAULT_MUSIC_SETTINGS } from "../../../types/music";
 import { DEFAULT_VIDEO_SETTINGS } from "../constants";
 import {
@@ -9,6 +12,14 @@ import {
   serializeRegionPrompt,
 } from "../image/region-prompt";
 import { useGenSpaceGenerationActions } from "./useGenSpaceGenerationActions";
+import { backendFetch } from "../../../lib/backend";
+import { stageEntityInputs } from "../logic/reference-entity-staging";
+
+vi.mock("../../../lib/backend", () => ({ backendFetch: vi.fn() }));
+vi.mock("../logic/reference-entity-staging", async () => ({
+  ...(await vi.importActual<typeof import("../logic/reference-entity-staging")>("../logic/reference-entity-staging")),
+  stageEntityInputs: vi.fn(),
+}));
 
 const framingSettings = {
   camera: "ARRI Alexa 35",
@@ -80,6 +91,16 @@ describe("useGenSpaceGenerationActions", () => {
       [],
       undefined,
       { kind: "image-output", snapshot: expect.objectContaining({ prompt: effectivePrompt }) },
+    );
+    vi.mocked(backendFetch).mockResolvedValue(new Response(JSON.stringify({ prompt: "Reviewed effective prompt" })));
+    await act(() => result.current.enhancement.enhance());
+    act(() => result.current.enhancement.review.apply());
+    await act(() => result.current.submit());
+    expect(generateImage).toHaveBeenLastCalledWith(
+      "Reviewed effective prompt", expect.objectContaining({ enhancePrompt: false }), [], undefined,
+      { kind: "image-output", snapshot: expect.objectContaining({
+        promptEnhancement: { originalPrompt: "user prompt", effectivePrompt: "Reviewed effective prompt" },
+      }) },
     );
   });
 
@@ -371,5 +392,50 @@ describe("useGenSpaceGenerationActions", () => {
       "relight",
       { kind: "video-output", snapshot: expect.objectContaining({ prompt: "relight this shot", videoTool: "relight", inputs: [toolInput] }) },
     );
+  });
+
+  it("retains staged files for ambiguous failures and removes only new files for rejected admission", async () => {
+    const generate: UseGenerationReturn["generate"] = vi.fn()
+      .mockRejectedValueOnce(new Error("queue refresh failed"))
+      .mockRejectedValueOnce(new QueueAdmissionRejectedError("queue rejected"));
+    const deleteProjectAssetFiles = vi.fn(async () => ({ success: true, deleted: [], skipped: [], failed: [] }));
+    vi.stubGlobal("electronAPI", { deleteProjectAssetFiles });
+    vi.mocked(stageEntityInputs).mockImplementation(async (inputs) => inputs.map((input, index) => ({
+      ...input,
+      path: index === 0 ? "C:/project/uploads/new.png" : "C:/project/uploads/reused.png",
+      url: index === 0 ? "file:///C:/project/uploads/new.png" : "file:///C:/project/uploads/reused.png",
+      created: index === 0,
+    })));
+
+    const referenceEntities: ReferenceEntity[] = [
+      { id: "cast", kind: "cast", name: "Cast", token: "@cast", visualDescription: "a performer", voiceDescription: "", fidelity: "exact", createdAt: 1, updatedAt: 1, visualReference: { type: "image", relativePath: "cast.png", path: "C:/library/cast.png", url: "file:///C:/library/cast.png", fileName: "cast.png" } },
+      { id: "location", kind: "location", name: "Location", token: "@location", visualDescription: "a studio", fidelity: "exact", createdAt: 1, updatedAt: 1, visualReference: { type: "image", relativePath: "location.png", path: "C:/library/location.png", url: "file:///C:/library/location.png", fileName: "location.png" } },
+    ];
+    const videoProfiles = [{
+      id: DEFAULT_VIDEO_SETTINGS.videoProfileId,
+      promptComposer: { promptFormat: "plain", entityMediaMode: "general-reference", voiceReference: false },
+    }] as ModelProfile[];
+
+    const { result } = renderHook(() =>
+      useGenSpaceGenerationActions({
+        mode: "video", imageMode: "create", regionPrompt: createEmptyRegionPrompt(), videoMode: "generate",
+        prompt: "@cast at @location", framingSettings: null, promptEnhancementEnabled: false,
+        referenceEntities, videoProfiles, currentProjectId: "project-a", projectAssets: [], settings: { ...DEFAULT_VIDEO_SETTINGS },
+        setSettings: vi.fn(), musicSettings: DEFAULT_MUSIC_SETTINGS, musicProfiles: [], imageInputs: [],
+        inputImage: null, inputAudio: null, useAudioTrack: false,
+        reframeInput: { videoUrl: null, videoPath: null, startTime: 0, duration: 0, videoDuration: 0, videoWidth: 0, videoHeight: 0, aspectMode: "16:9", padding: { top: 0, bottom: 0, left: 0, right: 0 }, ready: false },
+        retakeInput: { videoPath: null, startTime: 0, duration: 0, videoDuration: 0 }, setLocalError: vi.fn(),
+        generate, generateImage: vi.fn(async () => undefined), generateMusic: vi.fn(async () => null), submitRetake: vi.fn(async () => undefined),
+      }),
+    );
+
+    const ambiguousSubmission = result.current.submit();
+    const duplicateSubmission = result.current.submit();
+    await expect(ambiguousSubmission).rejects.toThrow("queue refresh failed");
+    await expect(duplicateSubmission).resolves.toBeUndefined();
+    expect(stageEntityInputs).toHaveBeenCalledTimes(1);
+    expect(deleteProjectAssetFiles).not.toHaveBeenCalled();
+    await expect(act(() => result.current.submit())).rejects.toThrow("queue rejected");
+    expect(deleteProjectAssetFiles).toHaveBeenCalledWith({ projectId: "project-a", filePaths: ["C:/project/uploads/new.png"] });
   });
 });

@@ -54,6 +54,8 @@ const props: Omit<GenSpaceSelectedGenerationProps, "isActive"> = {
   onToggleFavorite: vi.fn(),
   onUseImage: vi.fn(),
   onUseVideo: vi.fn(),
+  getHandoffDestinations: vi.fn(() => []),
+  onHandoff: vi.fn(),
   onUpscale: vi.fn(),
   onCopySettings: vi.fn(),
   onDelete: vi.fn(),

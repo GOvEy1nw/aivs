@@ -23,6 +23,8 @@ import {
 } from "../../components/UseVideoDropdown";
 import { FloatingMenu } from "../../components/FloatingMenu";
 import { getColorLabel } from "./video-editor-utils";
+import { GalleryHandoffMenu } from "../genspace/components/GalleryHandoffMenu";
+import type { GalleryHandoffDestination } from "../genspace/logic/gallery-handoff-policy";
 
 export interface AssetContextMenuProps {
   asset: Asset;
@@ -44,6 +46,8 @@ export interface AssetContextMenuProps {
   onToggleFavorite?: (asset: Asset) => void;
   onUseImage?: (asset: Asset, target: ImageUseTarget) => void;
   onUseVideo?: (asset: Asset, target: VideoUseTarget) => void;
+  getHandoffDestinations?: (asset: Asset) => readonly GalleryHandoffDestination[];
+  onHandoff?: (asset: Asset, destination: GalleryHandoffDestination) => void;
   onCopySettings?: (asset: Asset) => void;
   handleRegenerate?: (assetId: string) => void;
   handleCancelRegeneration?: () => void;
@@ -91,6 +95,8 @@ export function AssetContextMenu({
   onToggleFavorite,
   onUseImage,
   onUseVideo,
+  getHandoffDestinations,
+  onHandoff,
   onCopySettings,
   handleRegenerate,
   handleCancelRegeneration,
@@ -168,7 +174,17 @@ export function AssetContextMenu({
         </button>
       )}
 
-      {!isMulti && asset.type === "image" && onUseImage ? (
+      {!isMulti && getHandoffDestinations && onHandoff ? (
+        <GalleryHandoffMenu
+          asset={asset}
+          destinations={getHandoffDestinations(asset)}
+          onSelect={(destination) => {
+            onHandoff(asset, destination);
+            setAssetContextMenu(null);
+          }}
+          variant="context"
+        />
+      ) : !isMulti && asset.type === "image" && onUseImage ? (
         <UseImageDropdown
           onSelect={(target) => {
             onUseImage(asset, target);
@@ -178,7 +194,7 @@ export function AssetContextMenu({
         />
       ) : null}
 
-      {!isMulti && asset.type === "video" && onUseVideo ? (
+      {!isMulti && (!getHandoffDestinations || !onHandoff) && asset.type === "video" && onUseVideo ? (
         <UseVideoDropdown
           onSelect={(target) => {
             onUseVideo(asset, target);

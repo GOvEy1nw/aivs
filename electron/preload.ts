@@ -66,7 +66,7 @@ const electronAPI: ElectronAPI = {
   // Paths
   getDownloadsPath: (): Promise<string> => ipcRenderer.invoke('get-downloads-path'),
   // Project assets
-  copyToProjectAssets: (srcPath: string, projectId: string, preserveSource?: boolean): Promise<{ success: boolean; path?: string; url?: string; error?: string }> =>
+  copyToProjectAssets: (srcPath: string, projectId: string, preserveSource?: boolean): Promise<{ success: boolean; path?: string; url?: string; alreadyExisted?: boolean; reusedExisting?: boolean; error?: string }> =>
     ipcRenderer.invoke('copy-to-project-assets', srcPath, projectId, preserveSource),
   copyGeneratedOutputToProjectAssets: (srcPath: string, projectId: string): Promise<{ success: boolean; path?: string; url?: string; error?: string }> =>
     ipcRenderer.invoke('copy-generated-output-to-project-assets', srcPath, projectId),

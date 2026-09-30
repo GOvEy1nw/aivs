@@ -8,7 +8,7 @@ export interface SpeechReferenceAudio {
 }
 
 export interface SpeechSegment {
-  speaker: 1 | 2
+  speaker: 1 | 2 | 3
   text: string
 }
 

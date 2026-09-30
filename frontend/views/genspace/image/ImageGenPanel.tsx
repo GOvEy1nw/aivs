@@ -93,6 +93,7 @@ export function ImageGenPanel({
       disabled={generation.isRunning}
       prompt={prompt.value}
       onEnhance={prompt.enhance}
+      onEnhanceDraft={prompt.enhanceDraft}
       showEnhance={imageTools.mode !== "region"}
       enhanceEnabled={prompt.enhanceEnabled}
       isEnhancing={prompt.isEnhancing}
@@ -215,6 +216,7 @@ export function ImageGenPanel({
         />
       ) : (
         <PromptEditor
+          enhancementReview={prompt.enhancementReview}
           value={prompt.value}
           onChange={prompt.setValue}
           onSubmit={generation.submit}

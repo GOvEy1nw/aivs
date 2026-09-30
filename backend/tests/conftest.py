@@ -86,6 +86,7 @@ def test_state(tmp_path: Path, fake_services: FakeServices):
     handler.model_profiles._wangp_bridge = fake_wangp_bridge  # type: ignore[attr-defined]
     set_state_service_for_tests(handler)
     yield handler
+    handler.generation_queue.shutdown()
 
 
 @pytest.fixture
@@ -131,6 +132,8 @@ def enable_wangp(test_state, wangp_bridge):
     wangp_bridge.raise_on_director = None
     wangp_bridge.raise_on_music = None
     wangp_bridge.raise_on_compose_music_lyrics = None
+    test_state.health.default_warmup()
+    test_state.generation_queue.set_runtime_ready(wangp_bridge.get_status().session_ready)
     yield wangp_bridge
     test_state.config.wangp_enabled = False
 

@@ -25,10 +25,7 @@ class TestGetSettings:
         assert data["performanceProfile"] == 4
         assert data["reduceVram"] == "disabled"
         assert data["loadOnStartup"] is False
-        assert data["useLocalTextEncoder"] is False
-        assert data["fastModel"] == {"useUpscaler": True}
-        assert data["proModel"] == {"steps": 20, "useUpscaler": True}
-        assert data["promptCacheSize"] == 100
+        assert data["proModel"] == {"steps": 20}
         assert data["promptEnhancerEnabledT2V"] is True
         assert data["promptEnhancerEnabledI2V"] is False
         assert data["seedLocked"] is False
@@ -40,15 +37,9 @@ class TestGetSettings:
         assert data["outputSettings"]["audioCodec"] == "aac_192"
         assert data["outputSettings"]["metadataMode"] == "metadata"
         assert data["previewSettings"] == {
-            "mode": "tae",
-            "updateRate": "adaptive",
-            "device": "auto",
-            "maxEdge": 512,
-            "previewFps": 16,
-            "webpQuality": 72,
+            "mode": "tiny_vae_video",
         }
         assert data["quickGenFavouriteWorkflows"] == []
-        assert data["customFinetunes"] == {}
         assert "ltxApiKey" not in data
         assert "falApiKey" not in data
         assert "geminiApiKey" not in data
@@ -78,9 +69,7 @@ class TestPostSettings:
         assert r.status_code == 200
         assert test_state.state.app_settings.use_torch_compile is True
 
-    def test_custom_finetunes_are_rejected_but_legacy_settings_remain_inert(self, client, test_state):
-        legacy = {"z_image_turbo": r"E:\Models\z-image.safetensors"}
-        test_state.state.app_settings.custom_finetunes = legacy
+    def test_removed_finetune_setting_is_rejected(self, client):
         response = client.post(
             "/api/settings",
             json={
@@ -91,7 +80,6 @@ class TestPostSettings:
             },
         )
         assert response.status_code == 422
-        assert test_state.state.app_settings.custom_finetunes == legacy
 
     def test_update_multiple_fields(self, client, test_state):
         r = client.post("/api/settings", json={"useTorchCompile": True, "loadOnStartup": True})
@@ -119,18 +107,14 @@ class TestPostSettings:
             "reduce_vram": "2",
         }
 
-    @pytest.mark.parametrize("mode", ["rgb", "tae", "tiny_vae_frames"])
+    @pytest.mark.parametrize("mode", ["rgb", "tiny_vae_video", "tiny_vae_frames"])
     def test_update_preview_settings(self, client, test_state, wangp_bridge, mode):
+        test_state.state.app_settings.preview_settings.mode = "rgb" if mode == "tiny_vae_video" else "tiny_vae_video"
         r = client.post(
             "/api/settings",
             json={
                 "previewSettings": {
                     "mode": mode,
-                    "updateRate": "every_2",
-                    "device": "cpu",
-                    "maxEdge": 768,
-                    "previewFps": 8,
-                    "webpQuality": 85,
                 },
             },
         )
@@ -138,11 +122,6 @@ class TestPostSettings:
         assert r.status_code == 200
         assert wangp_bridge.preview_options == {
             "mode": mode,
-            "update_rate": "every_2",
-            "device": "cpu",
-            "max_edge": 768,
-            "preview_fps": 8,
-            "webp_quality": 85,
         }
 
     def test_invalid_runtime_preference_rejected(self, client):
@@ -150,33 +129,10 @@ class TestPostSettings:
 
         assert r.status_code == 422
 
-    def test_update_fast_model(self, client, test_state):
-        r = client.post("/api/settings", json={"fastModel": {"useUpscaler": False}})
-        assert r.status_code == 200
-        assert test_state.state.app_settings.fast_model.use_upscaler is False
-
     def test_update_pro_model(self, client, test_state):
-        r = client.post("/api/settings", json={"proModel": {"steps": 30, "useUpscaler": False}})
-        assert r.status_code == 200
-        assert test_state.state.app_settings.pro_model.steps == 30
-        assert test_state.state.app_settings.pro_model.use_upscaler is False
-
-    def test_deep_partial_patch_preserves_nested_fields(self, client, test_state):
-        assert test_state.state.app_settings.pro_model.use_upscaler is True
         r = client.post("/api/settings", json={"proModel": {"steps": 30}})
         assert r.status_code == 200
         assert test_state.state.app_settings.pro_model.steps == 30
-        assert test_state.state.app_settings.pro_model.use_upscaler is True
-
-    def test_prompt_cache_size_clamped_max(self, client, test_state):
-        r = client.post("/api/settings", json={"promptCacheSize": 5000})
-        assert r.status_code == 200
-        assert test_state.state.app_settings.prompt_cache_size <= 1000
-
-    def test_prompt_cache_size_clamped_min(self, client, test_state):
-        r = client.post("/api/settings", json={"promptCacheSize": -10})
-        assert r.status_code == 200
-        assert test_state.state.app_settings.prompt_cache_size >= 0
 
     def test_locked_seed_clamped_range(self, client, test_state):
         r = client.post("/api/settings", json={"lockedSeed": 9_999_999_999})
@@ -240,6 +196,33 @@ class TestPostSettings:
 
 
 class TestSettingsPersistence:
+    @pytest.mark.parametrize("old_mode, expected, warns", [
+        ("tae", "tiny_vae_video", False),
+        ("off", "rgb", True),
+        ("unknown", "rgb", True),
+        ("rgb", "rgb", False),
+        ("tiny_vae_frames", "tiny_vae_frames", False),
+        ("tiny_vae_video", "tiny_vae_video", False),
+    ])
+    def test_preview_migration_is_persisted_and_notice_does_not_recur(
+        self, test_state, default_app_settings, old_mode, expected, warns
+    ):
+        path = test_state.config.settings_file
+        path.write_text(json.dumps({
+            "locked_seed": 123,
+            "preview_settings": {"mode": old_mode, "device": "cpu", "update_rate": "every_2", "max_edge": 768, "preview_fps": 8, "webp_quality": 85},
+        }), encoding="utf-8")
+        loaded = test_state.settings.load_settings(default_app_settings)
+        assert loaded.preview_settings.mode == expected
+        assert bool(loaded.preview_migration_notice) is warns
+        assert loaded.locked_seed == 123
+        assert json.loads(path.read_text(encoding="utf-8"))["preview_settings"] == {"mode": expected}
+        test_state.settings.update_settings(UpdateSettingsRequest.model_validate({"previewMigrationNotice": ""}))
+        reloaded = test_state.settings.load_settings(default_app_settings)
+        assert reloaded.preview_settings.mode == expected
+        assert reloaded.preview_migration_notice == ""
+        assert reloaded.locked_seed == 123
+
     def _new_state(self, test_state, default_app_settings):
         fake_services = FakeServices()
         bundle = ServiceBundle(
@@ -252,6 +235,9 @@ class TestSettingsPersistence:
             json.dumps(
                 {
                     "prompt_cache_size": 5000,
+                    "custom_finetunes": {"legacy": "E:/Models/legacy.safetensors"},
+                    "fast_model": {"use_upscaler": False},
+                    "use_local_text_encoder": True,
                     "locked_seed": -55,
                     "pro_model": {"steps": 999},
                 }
@@ -260,11 +246,10 @@ class TestSettingsPersistence:
         )
 
         loaded = self._new_state(test_state, default_app_settings)
-        assert loaded.state.app_settings.prompt_cache_size == 1000
         assert loaded.state.app_settings.locked_seed == 0
         assert loaded.state.app_settings.pro_model.steps == 100
 
-    def test_existing_settings_without_preview_options_use_tae_defaults(
+    def test_existing_settings_without_preview_options_use_native_defaults(
         self, test_state, default_app_settings
     ):
         test_state.config.settings_file.write_text(
@@ -274,12 +259,7 @@ class TestSettingsPersistence:
         loaded = self._new_state(test_state, default_app_settings)
 
         assert loaded.state.app_settings.preview_settings.model_dump() == {
-            "mode": "tae",
-            "update_rate": "adaptive",
-            "device": "auto",
-            "max_edge": 512,
-            "preview_fps": 16,
-            "webp_quality": 72,
+            "mode": "tiny_vae_video",
         }
 
     def test_existing_settings_without_ui_theme_use_dark_default(self, test_state, default_app_settings):

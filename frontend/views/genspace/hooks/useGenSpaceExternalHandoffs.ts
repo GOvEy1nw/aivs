@@ -15,7 +15,7 @@ export function useGenSpaceExternalHandoffs({
   setVideoMode,
   setInputImage,
   setInputAudio,
-  setPrompt,
+  setPromptForMode,
   setError,
 }: {
   editImageUrl: string | null;
@@ -30,7 +30,7 @@ export function useGenSpaceExternalHandoffs({
   setVideoMode: (mode: VideoProcessMode) => void;
   setInputImage: (url: string | null) => void;
   setInputAudio: (url: string | null) => void;
-  setPrompt: (prompt: string) => void;
+  setPromptForMode: (mode: GenSpaceMode, prompt: string) => void;
   setError: (error: string | null) => void;
 }) {
   useEffect(() => {
@@ -38,7 +38,7 @@ export function useGenSpaceExternalHandoffs({
     setMode("video");
     setVideoMode("generate");
     setInputImage(editImageUrl);
-    setPrompt("");
+    setPromptForMode("video", "");
     clearEditImage();
     clearEditMode();
   }, [
@@ -47,7 +47,7 @@ export function useGenSpaceExternalHandoffs({
     editImageUrl,
     setInputImage,
     setMode,
-    setPrompt,
+    setPromptForMode,
     setVideoMode,
   ]);
 
@@ -56,14 +56,14 @@ export function useGenSpaceExternalHandoffs({
     setMode("video");
     setVideoMode("generate");
     setInputAudio(audioUrl);
-    setPrompt("");
+    setPromptForMode("video", "");
     clearAudio();
   }, [
     audioUrl,
     clearAudio,
     setInputAudio,
     setMode,
-    setPrompt,
+    setPromptForMode,
     setVideoMode,
   ]);
 

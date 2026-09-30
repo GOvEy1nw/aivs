@@ -159,11 +159,11 @@ export function getH3ReferenceState(
   const canAdd = !hasFlInput && totalCount < 12;
   const availability = {
     image: canAdd && imageCount < 9,
-    video: canAdd && !depth && videoCount < 2,
+    video: canAdd && !depth && videoCount < 3,
     audio:
       canAdd &&
       soundtrackCount === 0 &&
-      audioCount < 2 &&
+      audioCount < 3 &&
       audioCount + 1 <= imageCount + videoCount,
   };
   return {

@@ -913,8 +913,10 @@ export function TimelineTrackCanvas(props: TimelineTrackCanvasProps) {
                             </button>
                           </Tooltip>
                           {clip.type === "video" && (
-                            <Tooltip content="Retake section" side="top">
+                            <Tooltip content="Retake is not supported by the current local runtime." side="top">
                               <button
+                                disabled
+                                aria-label="Retake unavailable"
                                 onClick={() => handleRetakeClip(clip)}
                                 className="p-0.5 rounded-sm transition-colors hover:bg-white/10 text-zinc-500 hover:text-blue-400"
                               >

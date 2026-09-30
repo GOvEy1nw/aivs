@@ -22,17 +22,13 @@ import {
   X,
 } from "lucide-react";
 import { ClipWaveform } from "../../components/AudioWaveform";
-import {
-  UseImageDropdown,
-  type ImageUseTarget,
-} from "../../components/UseImageDropdown";
-import {
-  UseVideoDropdown,
-  type VideoUseTarget,
-} from "../../components/UseVideoDropdown";
+import type { ImageUseTarget } from "../../components/UseImageDropdown";
+import type { VideoUseTarget } from "../../components/UseVideoDropdown";
 import type { Asset } from "../../types/project";
 import type { GenSpaceGalleryProps } from "./GenSpaceGallery";
 import { GenerationPreviewMedia } from "./components/GenerationPreviewMedia";
+import { GalleryHandoffMenu } from "./components/GalleryHandoffMenu";
+import type { GalleryHandoffDestination } from "./logic/gallery-handoff-policy";
 
 export interface GenSpaceSelectedGenerationProps {
   style?: React.CSSProperties;
@@ -52,6 +48,8 @@ export interface GenSpaceSelectedGenerationProps {
   onToggleFavorite: (asset: Asset) => void;
   onUseImage: (asset: Asset, target: ImageUseTarget) => void;
   onUseVideo: (asset: Asset, target: VideoUseTarget) => void;
+  getHandoffDestinations: (asset: Asset) => readonly GalleryHandoffDestination[];
+  onHandoff: (asset: Asset, destination: GalleryHandoffDestination) => void;
   onUpscale: (asset: Asset) => void;
   onCopySettings: (asset: Asset) => void;
   onDelete: (asset: Asset) => void;
@@ -771,8 +769,8 @@ export function GenSpaceSelectedGeneration({
   onPrevious,
   onNext,
   onToggleFavorite,
-  onUseImage,
-  onUseVideo,
+  getHandoffDestinations,
+  onHandoff,
   onUpscale,
   onCopySettings,
   onDelete,
@@ -1082,16 +1080,12 @@ export function GenSpaceSelectedGeneration({
                   void window.electronAPI?.showItemInFolder(asset.path)
                 }
               />
-              {asset.type === "image" ? (
-                <UseImageDropdown
-                  onSelect={(target) => onUseImage(asset, target)}
-                />
-              ) : null}
-              {asset.type === "video" ? (
-                <UseVideoDropdown
-                  onSelect={(target) => onUseVideo(asset, target)}
-                />
-              ) : null}
+              <GalleryHandoffMenu
+                asset={asset}
+                destinations={getHandoffDestinations(asset)}
+                onSelect={(destination) => onHandoff(asset, destination)}
+                variant="detail"
+              />
               {asset.type === "image" || asset.type === "video" ? (
                 <ActionButton
                   label="Upscale"

@@ -45,13 +45,8 @@ class SettingsPatchModel(SettingsBaseModel):
     )
 
 
-class FastModelSettings(SettingsBaseModel):
-    use_upscaler: bool = True
-
-
 class ProModelSettings(SettingsBaseModel):
     steps: int = 20
-    use_upscaler: bool = True
 
     @field_validator("steps", mode="before")
     @classmethod
@@ -88,22 +83,7 @@ class OutputSettings(SettingsBaseModel):
 
 
 class PreviewSettings(SettingsBaseModel):
-    mode: Literal["off", "rgb", "tae", "tiny_vae_frames"] = "tae"
-    update_rate: Literal["adaptive", "every_step", "every_2", "every_4"] = "adaptive"
-    device: Literal["auto", "cuda", "cpu"] = "auto"
-    max_edge: int = 512
-    preview_fps: Literal[2, 4, 8, 16] = 16
-    webp_quality: int = 72
-
-    @field_validator("max_edge", mode="before")
-    @classmethod
-    def _clamp_max_edge(cls, value: Any) -> int:
-        return _clamp_int(value, minimum=128, maximum=1024, default=512)
-
-    @field_validator("webp_quality", mode="before")
-    @classmethod
-    def _clamp_webp_quality(cls, value: Any) -> int:
-        return _clamp_int(value, minimum=1, maximum=100, default=72)
+    mode: Literal["rgb", "tiny_vae_frames", "tiny_vae_video"] = "tiny_vae_video"
 
 
 class AppSettings(SettingsBaseModel):
@@ -113,23 +93,15 @@ class AppSettings(SettingsBaseModel):
     performance_profile: float = 4.0
     reduce_vram: Literal["disabled", "1", "2", "3"] = "disabled"
     load_on_startup: bool = False
-    use_local_text_encoder: bool = False
-    fast_model: FastModelSettings = Field(default_factory=FastModelSettings)
     pro_model: ProModelSettings = Field(default_factory=ProModelSettings)
-    prompt_cache_size: int = 100
     prompt_enhancer_enabled_t2v: bool = True
     prompt_enhancer_enabled_i2v: bool = False
     seed_locked: bool = False
     locked_seed: int = 42
     output_settings: OutputSettings = Field(default_factory=OutputSettings)
     preview_settings: PreviewSettings = Field(default_factory=PreviewSettings)
+    preview_migration_notice: str = ""
     quick_gen_favourite_workflows: list[str] = Field(default_factory=list)
-    custom_finetunes: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("prompt_cache_size", mode="before")
-    @classmethod
-    def _clamp_prompt_cache_size(cls, value: Any) -> int:
-        return _clamp_int(value, minimum=0, maximum=1000, default=100)
 
     @field_validator("performance_profile", mode="before")
     @classmethod
@@ -203,18 +175,15 @@ class SettingsResponse(SettingsBaseModel):
     performance_profile: float = 4.0
     reduce_vram: Literal["disabled", "1", "2", "3"] = "disabled"
     load_on_startup: bool = False
-    use_local_text_encoder: bool = False
-    fast_model: FastModelSettings = Field(default_factory=FastModelSettings)
     pro_model: ProModelSettings = Field(default_factory=ProModelSettings)
-    prompt_cache_size: int = 100
     prompt_enhancer_enabled_t2v: bool = True
     prompt_enhancer_enabled_i2v: bool = False
     seed_locked: bool = False
     locked_seed: int = 42
     output_settings: OutputSettings = Field(default_factory=OutputSettings)
     preview_settings: PreviewSettings = Field(default_factory=PreviewSettings)
+    preview_migration_notice: str = ""
     quick_gen_favourite_workflows: list[str] = Field(default_factory=list)
-    custom_finetunes: dict[str, str] = Field(default_factory=dict)
 
 
 def to_settings_response(settings: AppSettings) -> SettingsResponse:

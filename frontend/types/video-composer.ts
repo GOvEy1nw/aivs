@@ -12,6 +12,8 @@ export interface VideoSequenceShot {
 export interface VideoSequenceScene {
   id: string;
   location: string;
+  /** Stable saved-location identity. Omitted for free text and older drafts. */
+  locationEntityId?: string;
   timeOfDay: string;
   lighting: string;
   soundscape: string;

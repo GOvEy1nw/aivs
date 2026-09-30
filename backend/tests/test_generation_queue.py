@@ -86,6 +86,28 @@ def _submit(queue: GenerationQueueHandler, request_id: str) -> str:
     )["jobId"]
 
 
+def test_retake_is_rejected_and_old_queued_work_is_retained_as_failed(tmp_path):
+    queue = _queue(tmp_path)
+    try:
+        with pytest.raises(HTTPError, match="RETAKE_UNAVAILABLE"):
+            queue.submit(kind="video.retake", payload={}, client_request_id="new-retake", summary={}, client_context={})
+        saved_id = _submit(queue, "old-retake")
+    finally:
+        queue.shutdown()
+    queue.state.jobs[saved_id].kind = "video.retake"
+    GenerationQueueStore(tmp_path / "generation-queue.json").save(queue.state)
+    restored = _queue(tmp_path)
+    try:
+        job = restored.get_job(saved_id)
+        assert job.status == "failed"
+        assert job.error is not None and "RETAKE_UNAVAILABLE" in job.error
+        assert job.payload == {"prompt": "test"}
+        assert restored.snapshot()["queued"] == []
+        assert restored.snapshot()["attention"][0]["id"] == saved_id
+    finally:
+        restored.shutdown()
+
+
 def test_bound_generation_download_progress_reaches_queue_and_clears(tmp_path):
     from state.app_state_types import AppState, StartupReady
     from state.app_settings import AppSettings

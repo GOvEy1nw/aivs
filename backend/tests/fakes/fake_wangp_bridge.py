@@ -66,6 +66,10 @@ class FakeWangpEnhancePromptCall:
     mode: str
     model_type: str
     image_path: str | None
+    end_image_path: str | None = None
+    control_image_path: str | None = None
+    reference_image_paths: list[str] | None = None
+    duration_seconds: float | None = None
 
 
 @dataclass
@@ -277,19 +281,9 @@ class FakeWanGPBridge:
         self,
         *,
         mode: str,
-        update_rate: str,
-        device: str,
-        max_edge: int,
-        preview_fps: int,
-        webp_quality: int,
     ) -> None:
         self.preview_options = {
             "mode": mode,
-            "update_rate": update_rate,
-            "device": device,
-            "max_edge": max_edge,
-            "preview_fps": preview_fps,
-            "webp_quality": webp_quality,
         }
 
     def generate_video(
@@ -322,7 +316,10 @@ class FakeWanGPBridge:
         reference_image_paths: list[str] | None = None,
         reference_video_paths: list[str] | None = None,
         reference_audio_paths: list[str] | None = None,
+        h3_video_excerpt_positions: list[str] | None = None,
+        h3_audio_excerpt_positions: list[str] | None = None,
     ) -> str:
+        del h3_video_excerpt_positions, h3_audio_excerpt_positions
         self.video_calls.append(
             FakeWangpVideoCall(
                 prompt=prompt,
@@ -555,6 +552,10 @@ class FakeWanGPBridge:
         mode: str,
         model_type: str,
         image_path: str | None = None,
+        end_image_path: str | None = None,
+        control_image_path: str | None = None,
+        reference_image_paths: list[str] | None = None,
+        duration_seconds: float | None = None,
     ) -> str:
         self.enhance_prompt_calls.append(
             FakeWangpEnhancePromptCall(
@@ -562,6 +563,10 @@ class FakeWanGPBridge:
                 mode=mode,
                 model_type=model_type,
                 image_path=image_path,
+                end_image_path=end_image_path,
+                control_image_path=control_image_path,
+                reference_image_paths=reference_image_paths,
+                duration_seconds=duration_seconds,
             )
         )
         if self.raise_on_enhance_prompt is not None:

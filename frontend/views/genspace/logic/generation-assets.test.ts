@@ -132,9 +132,10 @@ describe("GenSpace generated asset builders", () => {
       projectId: "project-a",
       prompt: "animate",
       settings: { ...DEFAULT_VIDEO_SETTINGS, duration: 4 },
-      inputs: [input],
+      inputs: [{ ...input, useAudioTrack: true }],
       inputImage: null,
       inputAudio: null,
+      useAudioTrack: true,
       videoTool: "relight",
       assetPaths: [{ url: input.url, path: "C:\\guide.mp4" }],
     };
@@ -154,10 +155,12 @@ describe("GenSpace generated asset builders", () => {
         {
           role: "control_video",
           path: "C:\\guide.mp4",
+          useAudioTrack: true,
           trimStartTime: 1,
           trimDuration: 4,
         },
       ],
+      useAudioTrack: true,
     });
     expect(asset.takes?.[0]?.seed).toBe(321);
   });
@@ -166,6 +169,7 @@ describe("GenSpace generated asset builders", () => {
     const asset = buildGeneratedVideoAsset({
       snapshot: {
         projectId: "project-a", prompt: "compiled", settings: { ...DEFAULT_VIDEO_SETTINGS, duration: 5 }, inputs: [], inputImage: null, inputAudio: null, assetPaths: [],
+        useAudioTrack: false,
         composer: { schemaVersion: 1, mode: "sequence", sequence: { schemaVersion: 1, scenes: [] }, referencedEntities: [], authoredBrief: "@beth", compiledPrompt: "compiled", resolvedDurationSeconds: 5 },
       },
       finalPath: "C:\\output.mp4", finalUrl: "file:///C:/output.mp4", createdAt: 1,
@@ -197,6 +201,7 @@ describe("GenSpace generated asset builders", () => {
       snapshot: {
         projectId: "project-a", prompt: "", settings: { ...DEFAULT_VIDEO_SETTINGS },
         inputs: [source], assetPaths: [], inputImage: null, inputAudio: null, videoTool: "upscale",
+        useAudioTrack: false,
         upscale: { mediaKind: "video", method: "lanczos", scale: 2, source },
       },
       finalPath: "C:\\output.mp4", finalUrl: "file:///C:/output.mp4", createdAt: 1,
@@ -213,6 +218,7 @@ describe("GenSpace generated asset builders", () => {
       inputs: [],
       inputImage: null,
       inputAudio: null,
+      useAudioTrack: false,
       assetPaths: [],
     };
 

@@ -235,6 +235,6 @@ class GenerationHandler(StateHandlerBase):
     def is_generation_running(self) -> bool:
         if self._bound_context() is not None:
             return False
-        if self._queue is not None:
-            return self._queue.snapshot().get("active") is not None
+        if self._queue is not None and self._queue.snapshot().get("active") is not None:
+            return True
         return isinstance(self.state.generation, GenerationRunning)

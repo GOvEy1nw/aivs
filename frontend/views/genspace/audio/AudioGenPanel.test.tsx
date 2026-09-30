@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelProfile } from "../../../types/model-profiles";
@@ -53,15 +53,6 @@ function controller(sfx: SfxGenPanelController): AudioGenPanelController {
 }
 
 describe("AudioGenPanel SFX header", () => {
-  it("places the MMAudio model control beside the Audio type control", () => {
-    const { container } = render(<AudioGenPanel controller={controller(sfxController())} />);
-    const header = container.querySelector(".border-b.border-zinc-800");
-
-    expect(header).not.toBeNull();
-    expect(within(header as HTMLElement).getByText("Type")).toBeTruthy();
-    expect(within(header as HTMLElement).getByText("MMAudio")).toBeTruthy();
-  });
-
   it("keeps the normal model download action in the Audio header", () => {
     render(
       <AudioGenPanel
@@ -215,7 +206,7 @@ describe("AudioGenPanel Speech", () => {
       path: secondVoice.path,
       url: secondVoice.url,
     });
-    fireEvent.click(screen.getByTitle("Enhance prompt"));
+    fireEvent.click(screen.getByRole("button", { name: /automatically enhance/i }));
     expect(enhance).toHaveBeenCalledOnce();
 
     fireEvent.click(

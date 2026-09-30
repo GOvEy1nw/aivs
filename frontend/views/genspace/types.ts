@@ -27,6 +27,7 @@ import type { Asset } from "../../types/project";
 import type { UpscaleMediaKind, UpscaleMethod, UpscaleMethodId } from "../../types/upscale";
 import type { QuickGenWorkflowId } from "./workflows";
 import type { VideoComposerStateV1, VideoComposerSubmissionV1, VideoSequenceScene, VideoSequenceShot } from "../../types/video-composer";
+import type { ReferenceEntity } from "../../../shared/reference-library";
 
 export type GenSpaceMode = "image" | "video" | "music";
 export type AudioSubMode = "music" | "speech" | "sfx" | "mixer";
@@ -79,6 +80,8 @@ export interface VideoGenSettings {
 }
 
 export interface GenSpacePromptController {
+  enhanceDraft?: () => void;
+  enhancementReview?: import("./hooks/usePromptEnhancement").PromptEnhancementReview;
   value: string;
   setValue: (value: string) => void;
   enhance: () => void;
@@ -208,6 +211,7 @@ export interface VideoGenPanelController {
     setMode: (mode: VideoComposerStateV1["mode"]) => void;
     updateScene: (id: string, patch: Partial<VideoSequenceScene>) => void;
     updateShot: (sceneId: string, shotId: string, patch: Partial<VideoSequenceShot>) => void;
+    selectLocation: (sceneId: string, location: Extract<ReferenceEntity, { kind: "location" }>) => void;
     addScene: () => void;
     addShot: (sceneId: string) => void;
     removeScene: (id: string) => void;
@@ -297,6 +301,7 @@ export interface GenSpaceSidebarController {
 }
 
 export interface ImageSubmissionSnapshot {
+  promptEnhancement?: import("./hooks/usePromptEnhancement").AppliedPromptEnhancement;
   projectId: string;
   submittedAt?: number;
   prompt: string;
@@ -312,6 +317,7 @@ export interface ImageSubmissionSnapshot {
 export interface VideoSubmissionSnapshot extends ImageSubmissionSnapshot {
   inputImage: string | null;
   inputAudio: string | null;
+  useAudioTrack: boolean;
   videoTool?: VideoToolId;
   composer?: VideoComposerSubmissionV1;
 }

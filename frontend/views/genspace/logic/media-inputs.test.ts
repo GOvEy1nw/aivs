@@ -93,6 +93,20 @@ describe("GenSpace media input logic", () => {
     expect(getH3ReferenceAvailability([input("frame", "start_image", "image")])).toEqual({ image: false, video: false, audio: false });
   });
 
+  it("allows three H3 video and audio references within their separate caps", () => {
+    const videos = ["one", "two", "three"].map((id) => input(id, "reference_video", "video"));
+    const state = getH3ReferenceState([
+      input("image", "reference_image", "image"),
+      ...videos,
+      input("audio-one", "reference_audio", "audio"),
+      input("audio-two", "reference_audio", "audio"),
+      input("audio-three", "reference_audio", "audio"),
+    ]);
+
+    expect(state).toMatchObject({ videoCount: 3, audioCount: 3, totalCount: 7 });
+    expect(state.availability).toMatchObject({ video: false, audio: false });
+  });
+
   it("retains a second video as disabled when depth is active and counts soundtracks as audio", () => {
     const first = { ...input("first", "reference_video", "video"), useAudioTrack: true };
     const depth = { ...input("depth", "depth", "video"), useAudioTrack: true };

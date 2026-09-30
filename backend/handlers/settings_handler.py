@@ -43,6 +43,8 @@ class SettingsHandler(StateHandlerBase):
                 loaded = AppSettings.model_validate(merged)
                 logger.info("Settings loaded from %s", self._settings_file)
                 self.state.app_settings = loaded
+                if migrated != payload:
+                    self.save_settings()
                 return loaded
             except Exception as exc:
                 logger.warning("Could not load settings: %s", exc, exc_info=True)
@@ -70,11 +72,7 @@ class SettingsHandler(StateHandlerBase):
         before_payload = ensure_json_object(before.model_dump(by_alias=False))
 
         if patch_payload:
-            if patch_payload.get("custom_finetunes"):
-                raise HTTPError(422, "Custom finetunes are no longer supported.")
             merged_payload = deep_merge_dicts(before_payload, patch_payload)
-            if "custom_finetunes" in patch_payload:
-                merged_payload["custom_finetunes"] = patch_payload["custom_finetunes"]
             try:
                 updated_settings = AppSettings.model_validate(merged_payload)
             except ValidationError as exc:

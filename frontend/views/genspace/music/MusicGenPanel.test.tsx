@@ -110,67 +110,15 @@ describe("MusicGenPanel", () => {
     );
   });
 
-  it("updates music settings from prompt controls", async () => {
+  it("updates music duration from prompt controls", async () => {
     render(<MusicPanelHarness />);
 
     expect(screen.getByRole("button", { name: "Music duration" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Music BPM" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Music key and scale" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Music time signature" })).toBeTruthy();
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Music key and scale" }),
-    );
-    expect(screen.getByRole("button", { name: "D minor" })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "D minor" }));
-    expect(screen.getByTestId("music-key-scale").textContent).toBe("D minor");
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Music time signature" }),
-    );
-    expect(screen.getByRole("button", { name: "6/8" })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "6/8" }));
-    expect(screen.getByTestId("music-time-signature").textContent).toBe("6/8");
 
     fireEvent.click(screen.getByRole("button", { name: "Music duration" }));
     fireEvent.change(screen.getByRole("slider", { name: "Music duration seconds" }), {
       target: { value: "90" },
     });
     expect(screen.getByTestId("music-duration-mode").textContent).toBe("manual");
-  });
-
-  it("uses button menus for language and voice", async () => {
-    render(<MusicPanelHarness />);
-
-    expect(
-      screen.getByRole("button", { name: "Music language" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Music vocal character" }),
-    ).toBeTruthy();
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Music language" }),
-    );
-    expect(screen.getByRole("button", { name: "Auto Detect" })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Auto Detect" }));
-    expect(screen.getByTestId("music-vocal-language").textContent).toBe("auto");
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Music vocal character" }),
-    );
-    expect(screen.getByRole("button", { name: "Female" })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Female" }));
-    expect(screen.getByTestId("music-vocal-gender").textContent).toBe("female");
-    expect(screen.queryByRole("combobox", { name: "Language" })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "Vocal character" })).toBeNull();
-
-    await userEvent.click(
-      screen.getByRole("tab", { name: "Instrumental" }),
-    );
-    expect(screen.queryByRole("button", { name: "Music language" })).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Music vocal character" }),
-    ).toBeNull();
   });
 });

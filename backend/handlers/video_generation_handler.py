@@ -57,6 +57,16 @@ def _h3_reference_media(req: GenerateVideoRequest) -> list[GenerateVideoInputMed
     return [media for media in req.inputMedia if media.role in _H3_REFERENCE_ROLES]
 
 
+def _h3_excerpt_position(media: GenerateVideoInputMedia, duration_seconds: float | None) -> str:
+    duration = media.trimDuration
+    if duration is None:
+        raise ValueError("H3 excerpt position requires a trim duration")
+    start = media.trimStartTime or 0.0
+    if duration_seconds is None or start < 0 or start + duration > duration_seconds:
+        raise HTTPError(400, "H3_REFERENCE_EXCERPT_OUT_OF_RANGE")
+    return f"{start + duration / 2:g}s/{duration:g}s"
+
+
 def _validate_and_compile_h3_prompt(
     req: GenerateVideoRequest, prompt: str
 ) -> tuple[str, bool]:
@@ -83,12 +93,28 @@ def _validate_and_compile_h3_prompt(
     uses_ref2va = bool(references)
     if uses_ref2va and any(media.role in _H3_FL_ONLY_ROLES for media in req.inputMedia):
         raise HTTPError(400, "H3_REF2VA_FL2VA_MEDIA_MIX")
+    if (
+        not uses_ref2va
+        and req.useAudioTrack
+        and any(
+            media.role == "control_video" and media.trimDuration is not None
+            for media in req.inputMedia
+        )
+    ):
+        raise HTTPError(400, "H3_CONTROL_VIDEO_SOUNDTRACK_EXCERPTS_UNSUPPORTED")
+    if (
+        not uses_ref2va
+        and req.useAudioTrack
+        and any(media.role == "control_video" for media in req.inputMedia)
+        and any(media.role == "audio_guide" for media in req.inputMedia)
+    ):
+        raise HTTPError(400, "H3_CONTROL_VIDEO_SOUNDTRACK_AUDIO_GUIDE_MIX")
 
     by_role = {
         role: [media for media in references if media.role == role]
         for role in _H3_REFERENCE_ROLES
     }
-    limits = {"reference_image": 9, "reference_video": 2, "reference_audio": 2, "depth": 1}
+    limits = {"reference_image": 9, "reference_video": 3, "reference_audio": 3, "depth": 1}
     for role, limit in limits.items():
         if len(by_role[role]) > limit:
             raise HTTPError(400, f"H3_{role.upper()}_LIMIT")
@@ -97,24 +123,34 @@ def _validate_and_compile_h3_prompt(
     if len(references) > 12:
         raise HTTPError(400, "H3_COMBINED_REFERENCE_LIMIT")
     active_videos = [*by_role["reference_video"], *by_role["depth"]]
-    soundtrack_count = len(active_videos) if any(media.useAudioTrack for media in active_videos) else 0
-    if any(media.useAudioTrack for media in active_videos) and not all(media.useAudioTrack for media in active_videos):
-        raise HTTPError(400, "H3_SOUNDTRACKS_MUST_BE_SYNCHRONIZED")
-    if soundtrack_count and by_role["reference_audio"]:
+    has_video_excerpts = any(media.trimDuration is not None for media in active_videos)
+    if has_video_excerpts and (len(by_role["reference_video"]) != 1 or by_role["depth"]):
+        raise HTTPError(400, "H3_VIDEO_EXCERPTS_REQUIRE_SINGLE_REFERENCE_VIDEO")
+    if any(media.trimDuration is not None for media in by_role["reference_audio"]):
+        raise HTTPError(400, "H3_AUDIO_EXCERPTS_REQUIRE_VIDEO_SOUNDTRACK")
+    soundtrack_videos = [media for media in active_videos if media.useAudioTrack]
+    if soundtrack_videos and len(active_videos) != 1:
+        raise HTTPError(400, "H3_SOUNDTRACK_SINGLE_VIDEO_REQUIRED")
+    if soundtrack_videos and by_role["reference_audio"]:
         raise HTTPError(400, "H3_SOUNDTRACK_AUDIO_REFERENCE_MIX")
-    if len(by_role["reference_audio"]) + soundtrack_count > 2:
-        raise HTTPError(400, "H3_AUDIO_REFERENCE_LIMIT")
     visual_count = len(by_role["reference_image"]) + len(active_videos)
-    if len(by_role["reference_audio"]) + soundtrack_count > visual_count:
+    if len(by_role["reference_audio"]) > visual_count:
         raise HTTPError(400, "H3_AUDIO_REFERENCE_REQUIRES_VISUAL_REFERENCE")
-    trimmed_total = 0.0
-    for media in [*active_videos, *by_role["reference_audio"]]:
+    video_trimmed_total = 0.0
+    audio_trimmed_total = 0.0
+    for media in active_videos:
         if media.trimDuration is None:
             continue
         if not 2 <= media.trimDuration <= 15:
             raise HTTPError(400, "H3_REFERENCE_DURATION_LIMIT")
-        trimmed_total += media.trimDuration
-    if trimmed_total > 15:
+        video_trimmed_total += media.trimDuration
+    for media in by_role["reference_audio"]:
+        if media.trimDuration is None:
+            continue
+        if not 2 <= media.trimDuration <= 15:
+            raise HTTPError(400, "H3_REFERENCE_DURATION_LIMIT")
+        audio_trimmed_total += media.trimDuration
+    if video_trimmed_total > 15 or audio_trimmed_total > 15:
         raise HTTPError(400, "H3_REFERENCE_TOTAL_DURATION_LIMIT")
 
     aliases: dict[str, str] = {}
@@ -189,11 +225,11 @@ class VideoGenerationHandler(StateHandlerBase):
         if self._generation.is_generation_running():
             raise HTTPError(409, "Generation already in progress")
 
+        duration = self._parse_forced_numeric_field(req.duration, "INVALID_DURATION")
+        fps = self._parse_forced_numeric_field(req.fps, "INVALID_FPS")
         generation_id = self._make_generation_id()
         self._generation.start_generation_job(generation_id)
 
-        duration = self._parse_forced_numeric_field(req.duration, "INVALID_DURATION")
-        fps = self._parse_forced_numeric_field(req.fps, "INVALID_FPS")
         is_reframe = req.reframe is not None
         is_lora_tool = req.videoTool is not None and req.videoTool != "extend"
         looks_like_reframe = (
@@ -324,15 +360,14 @@ class VideoGenerationHandler(StateHandlerBase):
                 if h3_uses_ref2va:
                     reference_videos = [media for media in req.inputMedia if media.role in {"reference_video", "depth"}]
                     audio_count = sum(media.role == "reference_audio" for media in req.inputMedia)
-                    video_prompt_type = "DV" if any(media.role == "depth" for media in reference_videos) else "V+-" if len(reference_videos) > 1 else "V-" if reference_videos else None
+                    video_prompt_type = "DV" if any(media.role == "depth" for media in reference_videos) else ("V1-U" if any(media.trimDuration is not None for media in reference_videos) else "V+*-U" if len(reference_videos) == 3 else "V+-U" if len(reference_videos) == 2 else "V-U" if reference_videos else None)
                     soundtrack_enabled = bool(reference_videos and reference_videos[0].useAudioTrack)
-                    audio_prompt_type = "K" if soundtrack_enabled else "AB" if audio_count > 1 else "A" if audio_count else None
+                    audio_prompt_type = "K1" if soundtrack_enabled and reference_videos[0].trimDuration is not None else "K" if soundtrack_enabled else "ABD" if audio_count == 3 else "AB" if audio_count == 2 else "A" if audio_count else None
                 elif control_video_path:
                     video_prompt_type = "GV"
                     if audio_path:
                         audio_prompt_type = "A"
                     elif req.useAudioTrack:
-                        audio_path = control_video_path
                         audio_prompt_type = "K"
                     else:
                         audio_prompt_type = "2"
@@ -383,7 +418,7 @@ class VideoGenerationHandler(StateHandlerBase):
                     temp_media_paths.append(cropped_path)
                     effective_path = str(cropped_path)
 
-                if media.trimDuration is None:
+                if media.trimDuration is None or (is_h3 and media.role in _H3_REFERENCE_ROLES):
                     transformed_media_paths[(media.role, media_path)] = effective_path
                     continue
                 if media.type == "audio":
@@ -426,7 +461,7 @@ class VideoGenerationHandler(StateHandlerBase):
                     "sdr_to_hdr",
                 }:
                     control_video_path = effective_path
-                    if media.role != "control_video" and req.useAudioTrack:
+                    if req.useAudioTrack and audio_path == media_path:
                         audio_path = effective_path
                 elif media.role in {
                     "audio_guide",
@@ -539,6 +574,8 @@ class VideoGenerationHandler(StateHandlerBase):
             validated_reference_images: list[str] = []
             validated_reference_videos: list[str] = []
             validated_reference_audios: list[str] = []
+            h3_video_excerpt_positions: list[str] = []
+            h3_audio_excerpt_positions: list[str] = []
             if is_h3 and h3_uses_ref2va:
                 for media in req.inputMedia:
                     media_path = normalize_optional_path(media.path)
@@ -548,14 +585,18 @@ class VideoGenerationHandler(StateHandlerBase):
                     if media.role == "reference_image":
                         validated_reference_images.append(str(validate_image_file(effective_path)))
                     elif media.role in {"reference_video", "depth"}:
-                        validated_reference_videos.append(str(validate_video_file(effective_path)))
+                        validated_path = str(validate_video_file(effective_path))
+                        validated_reference_videos.append(validated_path)
+                        if media.trimDuration is not None:
+                            metadata = probe_video_metadata(validated_path)
+                            h3_video_excerpt_positions.append(
+                                _h3_excerpt_position(media, metadata.duration_seconds if metadata else None)
+                            )
                     elif media.role == "reference_audio":
-                        validated_reference_audios.append(str(validate_audio_file(effective_path)))
-                if audio_prompt_type == "K":
-                    validated_reference_audios = [
-                        *validated_reference_videos,
-                        *validated_reference_audios,
-                    ]
+                        validated_path = str(validate_audio_file(effective_path))
+                        validated_reference_audios.append(validated_path)
+                if audio_prompt_type == "K1":
+                    h3_audio_excerpt_positions = h3_video_excerpt_positions.copy()
 
             settings = self.state.app_settings.model_copy(deep=True)
             active_model_type = (
@@ -656,6 +697,8 @@ class VideoGenerationHandler(StateHandlerBase):
                 reference_image_paths=validated_reference_images,
                 reference_video_paths=validated_reference_videos,
                 reference_audio_paths=validated_reference_audios,
+                h3_video_excerpt_positions=h3_video_excerpt_positions,
+                h3_audio_excerpt_positions=h3_audio_excerpt_positions,
             )
 
             self._generation.complete_generation(output_path)
@@ -801,6 +844,9 @@ class VideoGenerationHandler(StateHandlerBase):
     @staticmethod
     def _parse_forced_numeric_field(raw_value: str, error_detail: str) -> int:
         try:
-            return int(float(raw_value))
-        except (TypeError, ValueError):
+            value = int(float(raw_value))
+        except (TypeError, ValueError, OverflowError):
             raise HTTPError(400, error_detail) from None
+        if value <= 0:
+            raise HTTPError(400, error_detail)
+        return value

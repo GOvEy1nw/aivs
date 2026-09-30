@@ -45,6 +45,7 @@ import type { VideoUseTarget } from "../../../components/UseVideoDropdown";
 import { getAssetModelId } from "../logic/generation-assets";
 import {
   getDefaultImageInputRole,
+  findGuideInput,
   replaceGuideInput,
   replaceInputForRole,
 } from "../logic/media-inputs";
@@ -67,6 +68,7 @@ import { useGenSpaceGallery } from "./useGenSpaceGallery";
 import { useGenSpaceMediaInputs } from "./useGenSpaceMediaInputs";
 import type {
   FramingSettings,
+  GenSpaceMode,
   GenSpaceMediaInput,
   GenSpaceSidebarController,
 } from "../types";
@@ -79,6 +81,13 @@ import {
   isRegionPromptReady,
 } from "../image/region-prompt";
 import { getImageProfilesForMode } from "../image/image-profile-options";
+import {
+  getGalleryHandoffDestinations,
+  includesGalleryHandoffDestination,
+  isGalleryHandoffDestinationCurrent,
+  type GalleryHandoffDestination,
+} from "../logic/gallery-handoff-policy";
+import { GalleryExcerptDialog } from "../components/GalleryExcerptDialog";
 import type { VideoToolId } from "../../../types/video-tools";
 import { getVideoToolLabel } from "../video/video-tools";
 import {
@@ -146,8 +155,6 @@ export function useGenSpaceController(isActive: boolean) {
     isLoaded: appSettingsLoaded,
   } = useAppSettings();
   const {
-    prompt,
-    setPrompt,
     inputImage,
     setInputImage,
     imageInputs,
@@ -159,6 +166,14 @@ export function useGenSpaceController(isActive: boolean) {
     resolveInputFileUrl,
   } = useGenSpaceMediaInputs();
   const {
+    submode: audioSubmode,
+    setSubmode: setAudioSubmode,
+    sfxSettings,
+    setSfxSettings,
+    speechSettings,
+    setSpeechSettings,
+  } = useGenSpaceAudioState();
+  const {
     mode,
     setMode,
     imageMode,
@@ -167,14 +182,26 @@ export function useGenSpaceController(isActive: boolean) {
     setVideoMode,
     handleModeChange,
     handleVideoModeChange,
+    prompt,
+    setPrompt,
+    setPromptForMode,
   } = useGenSpaceModeState({
     imageInputs,
     setImageInputs,
     setInputImage,
     setInputAudio,
-    setPrompt,
+    audioSubmode,
   });
   const [localError, setLocalError] = useState<string | null>(null);
+  const [pendingGalleryExcerpt, setPendingGalleryExcerpt] = useState<{
+    asset: Asset;
+    destination: GalleryHandoffDestination;
+    projectId: string | null;
+    mode: GenSpaceMode;
+    imageProfileId: string;
+    videoProfileId: string;
+    speechProfileId: string;
+  } | null>(null);
   const { active: activeQueueJob, cancel: cancelQueueJob } = useGenerationQueue();
   const [selectedQueueJobId, setSelectedQueueJobId] = useState<string | null>(null);
   const [framingSettings, setFramingSettings] =
@@ -202,8 +229,15 @@ export function useGenSpaceController(isActive: boolean) {
     musicSettings,
     setMusicSettings,
   } = useGenSpaceSettingsState(musicProfiles);
-  const { submode: audioSubmode, setSubmode: setAudioSubmode, sfxSettings, setSfxSettings, speechSettings, setSpeechSettings } =
-    useGenSpaceAudioState();
+  const selectedImageProfile = imageProfiles.find(
+    (profile) => profile.id === imageSettings.profileId,
+  );
+  const selectedVideoProfile = videoProfiles.find(
+    (profile) => profile.id === videoSettings.profileId,
+  );
+  const selectedSpeechProfile = speechProfiles.find(
+    (profile) => profile.id === speechSettings.profileId,
+  );
   useEffect(() => {
     if (imageMode !== "edit" || editToolMode === "edit") return;
     const editProfiles = getImageProfilesForMode(imageProfiles, "edit");
@@ -458,7 +492,7 @@ export function useGenSpaceController(isActive: boolean) {
     setVideoMode,
     setInputImage,
     setInputAudio,
-    setPrompt,
+    setPromptForMode,
     setError: setLocalError,
   });
 
@@ -520,7 +554,7 @@ export function useGenSpaceController(isActive: boolean) {
     updateSettings,
   ]);
 
-  const { submit: handleGenerate } = useGenSpaceGenerationActions({
+  const { submit: handleGenerate, enhancement } = useGenSpaceGenerationActions({
     mode,
     imageMode,
     regionPrompt,
@@ -590,7 +624,6 @@ export function useGenSpaceController(isActive: boolean) {
         setEditToolMode("edit");
         setEditMask(null);
         setEditOutpaint(null);
-        setPrompt("");
         return;
       }
 
@@ -626,7 +659,10 @@ export function useGenSpaceController(isActive: boolean) {
         replaceInputForRole(current, { ...input, role }),
       );
       if (target === "first-frame") {
-        setPrompt(imageAsset.prompt || "The scene comes to life...");
+        setPromptForMode(
+          "video",
+          imageAsset.prompt || "The scene comes to life...",
+        );
       }
     },
     [
@@ -642,7 +678,7 @@ export function useGenSpaceController(isActive: boolean) {
       setInputAudio,
       setInputImage,
       setMode,
-      setPrompt,
+      setPromptForMode,
       setVideoMode,
     ],
   );
@@ -651,13 +687,12 @@ export function useGenSpaceController(isActive: boolean) {
     setMode("video");
     setVideoMode("reframe");
     setSelectedTool("reframe");
-    setPrompt("");
     setReframeSource({
       videoUrl: videoAsset.url,
       videoPath: videoAsset.path,
       duration: videoAsset.duration,
     });
-  }, [setMode, setVideoMode, setPrompt, setReframeSource, setSelectedTool]);
+  }, [setMode, setVideoMode, setReframeSource, setSelectedTool]);
   const handleUseVideo = useCallback(
     (videoAsset: Asset, target: VideoUseTarget) => {
       if (target === "reframe") {
@@ -682,7 +717,6 @@ export function useGenSpaceController(isActive: boolean) {
 
       setVideoMode("reframe");
       setSelectedTool(target);
-      setPrompt("");
       setReframeSource({
         videoUrl: videoAsset.url,
         videoPath: videoAsset.path,
@@ -693,7 +727,6 @@ export function useGenSpaceController(isActive: boolean) {
       handleReframe,
       setImageInputs,
       setMode,
-      setPrompt,
       setReframeSource,
       setSelectedTool,
       setVideoMode,
@@ -701,7 +734,6 @@ export function useGenSpaceController(isActive: boolean) {
   );
   const handleUpscale = useCallback(
     (asset: Asset) => {
-      setPrompt("");
       if (asset.type === "image") {
         setMode("image");
         setImageMode("upscale");
@@ -742,7 +774,6 @@ export function useGenSpaceController(isActive: boolean) {
       setInputAudio,
       setInputImage,
       setMode,
-      setPrompt,
       setSelectedTool,
       setToolInput,
       setVideoMode,
@@ -751,6 +782,7 @@ export function useGenSpaceController(isActive: boolean) {
   const clearLocalError = useCallback(() => setLocalError(null), []);
 
   const handleCopySettings = useGenSpaceSettingsRestore({
+    restorePromptEnhancement: enhancement.restore,
     assets: projectAssets,
     settings,
     musicSettings,
@@ -759,7 +791,7 @@ export function useGenSpaceController(isActive: boolean) {
     setMode,
     setImageMode,
     setVideoMode,
-    setPrompt,
+    setPromptForMode,
     setRegionPrompt,
     setSettings,
     setMusicSettings,
@@ -774,6 +806,7 @@ export function useGenSpaceController(isActive: boolean) {
     setEditOutpaint,
     setInputImage,
     setInputAudio,
+    setUseAudioTrack,
     setReframeSource,
     setVideoTool: setSelectedTool,
     setVideoToolInput: setToolInput,
@@ -872,6 +905,199 @@ export function useGenSpaceController(isActive: boolean) {
       : null,
     [mode, videoMode, prompt, composer.value, referenceEntities, imageInputs, videoProfiles, videoSettings.profileId],
   );
+  const getHandoffDestinations = useCallback(
+    (asset: Asset) =>
+      getGalleryHandoffDestinations({
+        asset,
+        imageProfile: selectedImageProfile,
+        videoProfile: selectedVideoProfile,
+        speechProfile: selectedSpeechProfile,
+        inputs: imageInputs,
+        speechReferenceCount: speechSettings.references.length,
+        hasEditProfile: getImageProfilesForMode(imageProfiles, "edit").some(
+          (profile) =>
+            profile.availability === "available" || profile.availability === "experimental",
+        ),
+      }),
+    [
+      imageInputs,
+      imageProfiles,
+      selectedImageProfile,
+      selectedSpeechProfile,
+      selectedVideoProfile,
+      speechSettings.references.length,
+    ],
+  );
+  const applyGalleryHandoff = useCallback(
+    (
+      asset: Asset,
+      destination: GalleryHandoffDestination,
+      trim?: Pick<GenSpaceMediaInput, "trimStartTime" | "trimDuration" | "mediaDuration">,
+    ) => {
+      if (asset.type !== "image" && asset.type !== "video" && asset.type !== "audio") {
+        return;
+      }
+      if (!includesGalleryHandoffDestination(getHandoffDestinations(asset), destination)) {
+        setLocalError("The destination is no longer available. The source was not added.");
+        return;
+      }
+      if (
+        trim &&
+        (!Number.isFinite(trim.trimStartTime) ||
+          !Number.isFinite(trim.trimDuration) ||
+          (trim.trimStartTime ?? 0) < 0 ||
+          (trim.trimDuration ?? 0) <= 0 ||
+          (trim.mediaDuration !== undefined &&
+            (trim.trimStartTime ?? 0) + (trim.trimDuration ?? 0) > trim.mediaDuration + 0.05))
+      ) {
+        setLocalError("Choose a valid excerpt within the source media.");
+        return;
+      }
+      const input: GenSpaceMediaInput = {
+        id: crypto.randomUUID(),
+        assetId: asset.id,
+        url: asset.url,
+        path: asset.path,
+        type: asset.type,
+        role: "reference",
+        ...trim,
+      };
+      if (destination.target === "edit-image") {
+        handleUseImage(asset, "edit-image");
+        return;
+      }
+      if (destination.target === "image-guide") {
+        setMode("image");
+        setVideoMode("generate");
+        setInputAudio(null);
+        setImageInputs((current) => [
+          ...current,
+          { ...input, role: getDefaultImageInputRole(selectedImageProfile?.inputMedia) },
+        ]);
+        return;
+      }
+      if (destination.target === "first-frame" || destination.target === "last-frame") {
+        handleUseImage(
+          asset,
+          destination.target === "first-frame" ? "first-frame" : "last-frame",
+        );
+        return;
+      }
+      if (destination.target === "control-video") {
+        const hasReferences = imageInputs.some(({ role }) =>
+          role === "reference_image" || role === "reference_video" ||
+          role === "reference_audio" || role === "depth",
+        );
+        if (hasReferences || imageInputs.some(({ role }) => role === "control_video")) {
+          setLocalError("Remove existing H3 references before adding a control video.");
+          return;
+        }
+        setMode("video");
+        setVideoMode("generate");
+        setImageInputs((current) =>
+          current.some(({ role }) =>
+            role === "control_video" || role === "reference_image" ||
+            role === "reference_video" || role === "reference_audio" || role === "depth",
+          )
+            ? current
+            : [...current, { ...input, role: "control_video" }],
+        );
+        return;
+      }
+      if (destination.target === "video-reference") {
+        setMode("video");
+        setVideoMode("generate");
+        setImageInputs((current) => [...current, { ...input, role: "reference_video" }]);
+        return;
+      }
+      if (destination.target === "video-guide") {
+        if (findGuideInput(imageInputs)) {
+          setLocalError("A guide is already in use. Remove it before adding a motion guide.");
+          return;
+        }
+        setMode("video");
+        setVideoMode("generate");
+        setImageInputs((current) =>
+          findGuideInput(current)
+            ? current
+            : [...current, { ...input, role: "human_motion" }],
+        );
+        return;
+      }
+      if (destination.target === "audio-guide") {
+        setMode("video");
+        setVideoMode("generate");
+        setImageInputs((current) =>
+          replaceGuideInput(current, { ...input, role: "audio_to_video" }),
+        );
+        return;
+      }
+      if (destination.target === "audio-reference") {
+        setMode("video");
+        setVideoMode("generate");
+        setImageInputs((current) => [...current, { ...input, role: "reference_audio" }]);
+        return;
+      }
+      if (destination.target === "voice-reference") {
+        setMode("music");
+        setAudioSubmode("speech");
+        setSpeechSettings((current) => ({
+          ...current,
+          references: [
+            ...current.references,
+            {
+              assetId: asset.id,
+              path: asset.path,
+              url: asset.url,
+              ...trim,
+            },
+          ],
+        }));
+        return;
+      }
+      handleUseVideo(
+        asset,
+        destination.target.replace("video-tool:", "") as VideoToolId,
+      );
+    },
+    [
+      handleUseImage,
+      handleUseVideo,
+      getHandoffDestinations,
+      selectedImageProfile?.inputMedia,
+      setAudioSubmode,
+      setImageInputs,
+      setInputAudio,
+      setMode,
+      setSpeechSettings,
+      setVideoMode,
+    ],
+  );
+  const handleGalleryHandoff = useCallback(
+    (asset: Asset, destination: GalleryHandoffDestination) => {
+      if (!destination.useExcerpt) {
+        applyGalleryHandoff(asset, destination);
+        return;
+      }
+      setPendingGalleryExcerpt({
+        asset,
+        destination,
+        projectId: currentProjectId,
+        mode,
+        imageProfileId: imageSettings.profileId,
+        videoProfileId: videoSettings.profileId,
+        speechProfileId: speechSettings.profileId,
+      });
+    },
+    [
+      applyGalleryHandoff,
+      currentProjectId,
+      imageSettings.profileId,
+      mode,
+      speechSettings.profileId,
+      videoSettings.profileId,
+    ],
+  );
   const canSubmit = isToolsMode
     ? selectedTool === "upscale"
       ? !!toolInput && !!activeUpscaleSelection.method && activeUpscaleSelection.scale !== null && !isGenerating
@@ -919,11 +1145,13 @@ export function useGenSpaceController(isActive: boolean) {
     ? isRetaking
     : isGenerating || isComposingLyrics;
   const promptController = {
+    enhanceDraft: enhancement.enhance,
+    enhancementReview: enhancement.review,
     value: prompt,
     setValue: setPrompt,
     enhance: () => setPromptEnhancementEnabled((current) => !current),
     enhanceEnabled: promptEnhancementEnabled,
-    isEnhancing: false,
+    isEnhancing: enhancement.review.busy,
     seedLocked,
     lockedSeed,
     setSeed: handleSeedChange,
@@ -1207,6 +1435,8 @@ export function useGenSpaceController(isActive: boolean) {
       },
       onUseImage: handleUseImage,
       onUseVideo: handleUseVideo,
+      getHandoffDestinations,
+      onHandoff: handleGalleryHandoff,
       onUpscale: handleUpscale,
       onCopySettings: handleCopySettings,
       onDelete: (asset: Asset) =>
@@ -1239,6 +1469,8 @@ export function useGenSpaceController(isActive: boolean) {
       },
       onUseImage: handleUseImage,
       onUseVideo: handleUseVideo,
+      getHandoffDestinations,
+      onHandoff: handleGalleryHandoff,
       onCopySettings: handleCopySettings,
       setAssetActiveTake,
       setTakesViewAssetId: galleryOverlays.setTakesViewAssetId,
@@ -1260,6 +1492,48 @@ export function useGenSpaceController(isActive: boolean) {
           resetRetake();
         }
       },
+      excerptHandoff: pendingGalleryExcerpt ? (
+        <GalleryExcerptDialog
+          asset={pendingGalleryExcerpt.asset}
+          destination={pendingGalleryExcerpt.destination}
+          onCancel={() => setPendingGalleryExcerpt(null)}
+          onUseFull={() => {
+            if (isGalleryHandoffDestinationCurrent(pendingGalleryExcerpt, {
+              projectId: currentProjectId,
+              mode,
+              imageProfileId: imageSettings.profileId,
+              videoProfileId: videoSettings.profileId,
+              speechProfileId: speechSettings.profileId,
+            })) {
+              applyGalleryHandoff(
+                pendingGalleryExcerpt.asset,
+                pendingGalleryExcerpt.destination,
+              );
+            } else {
+              setLocalError("The destination changed while choosing an excerpt. The source was not added.");
+            }
+            setPendingGalleryExcerpt(null);
+          }}
+          onUseExcerpt={(trim) => {
+            if (!isGalleryHandoffDestinationCurrent(pendingGalleryExcerpt, {
+              projectId: currentProjectId,
+              mode,
+              imageProfileId: imageSettings.profileId,
+              videoProfileId: videoSettings.profileId,
+              speechProfileId: speechSettings.profileId,
+            })) {
+              setLocalError("The destination changed while choosing an excerpt. The source was not added.");
+            } else {
+              applyGalleryHandoff(
+                pendingGalleryExcerpt.asset,
+                pendingGalleryExcerpt.destination,
+                trim,
+              );
+            }
+            setPendingGalleryExcerpt(null);
+          }}
+        />
+      ) : null,
     } satisfies GenSpaceOverlaysProps,
   };
 }
