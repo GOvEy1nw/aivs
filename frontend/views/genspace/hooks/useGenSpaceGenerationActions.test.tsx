@@ -14,6 +14,7 @@ import {
 import { useGenSpaceGenerationActions } from "./useGenSpaceGenerationActions";
 import { backendFetch } from "../../../lib/backend";
 import { stageEntityInputs } from "../logic/reference-entity-staging";
+import type { GenSpaceMediaInput } from "../types";
 
 vi.mock("../../../lib/backend", () => ({ backendFetch: vi.fn() }));
 vi.mock("../logic/reference-entity-staging", async () => ({
@@ -394,7 +395,54 @@ describe("useGenSpaceGenerationActions", () => {
     );
   });
 
+  it("preserves H3 anchors and entity references through staging and captures non-image enhancement roles", async () => {
+    const generate: UseGenerationReturn["generate"] = vi.fn(async () => undefined);
+    const referenceEntities: ReferenceEntity[] = [{
+      id: "cast", kind: "cast", name: "Cast", token: "@cast", visualDescription: "a performer",
+      voiceDescription: "", fidelity: "exact", createdAt: 1, updatedAt: 1,
+      visualReference: { type: "image", relativePath: "cast.png", path: "C:/library/cast.png", url: "file:///C:/library/cast.png", fileName: "cast.png" },
+    }];
+    const videoProfiles = [{ id: "minimax_h3_fast", promptComposer: {
+      promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: false,
+    } }] as ModelProfile[];
+    const inputs: GenSpaceMediaInput[] = ["start_image", "end_image", "reference_video", "reference_audio"].map((role) => ({
+      id: role, role, path: `C:/project/${role}`, url: `file:///C:/project/${role}`,
+      type: role === "reference_video" ? "video" : role === "reference_audio" ? "audio" : "image",
+    }));
+    vi.mocked(stageEntityInputs).mockImplementation(async (items) => items.map((item) => ({
+      ...item, path: "C:/project/uploads/cast.png", url: "file:///C:/project/uploads/cast.png", created: false,
+    })));
+    vi.mocked(backendFetch).mockResolvedValue(new Response(JSON.stringify({ prompt: "Reviewed H3 prompt" })));
+    const { result, rerender } = renderHook(({ imageInputs, prompt }) => useGenSpaceGenerationActions({
+      mode: "video", imageMode: "create", videoMode: "generate", regionPrompt: createEmptyRegionPrompt(),
+      prompt, framingSettings: null, promptEnhancementEnabled: false, referenceEntities, videoProfiles,
+      currentProjectId: "project-a", projectAssets: [], settings: { ...DEFAULT_VIDEO_SETTINGS, videoProfileId: "minimax_h3_fast" },
+      setSettings: vi.fn(), musicSettings: DEFAULT_MUSIC_SETTINGS, musicProfiles: [], imageInputs,
+      inputImage: null, inputAudio: null, useAudioTrack: false,
+      reframeInput: { videoUrl: null, videoPath: null, startTime: 0, duration: 0, videoDuration: 0, videoWidth: 0, videoHeight: 0, aspectMode: "16:9", padding: { top: 0, bottom: 0, left: 0, right: 0 }, ready: false },
+      retakeInput: { videoPath: null, startTime: 0, duration: 0, videoDuration: 0 }, setLocalError: vi.fn(),
+      generate, generateImage: vi.fn(async () => undefined), generateMusic: vi.fn(async () => null), submitRetake: vi.fn(async () => undefined),
+    }), { initialProps: { imageInputs: inputs.filter((item) => item.role !== "reference_video"), prompt: "@cast turns slowly" } });
+
+    await act(() => result.current.submit());
+    const submitted = vi.mocked(generate).mock.calls[0];
+    expect(submitted[4]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "start_image", path: inputs[0].path }),
+      expect.objectContaining({ role: "end_image", path: inputs[1].path }),
+      expect.objectContaining({ role: "reference_image", alias: "@image1", path: "C:/project/uploads/cast.png" }),
+    ]));
+
+    rerender({ imageInputs: inputs.slice(2), prompt: "Continue this scene" });
+    await act(() => result.current.enhancement.enhance());
+    const body = vi.mocked(backendFetch).mock.lastCall?.[1]?.body;
+    expect(typeof body).toBe("string");
+    expect(JSON.parse(String(body))).toMatchObject({
+      modelProfileId: "minimax_h3_fast", referenceImagePaths: [], inputRoles: ["reference_video", "reference_audio"],
+    });
+  });
+
   it("retains staged files for ambiguous failures and removes only new files for rejected admission", async () => {
+    vi.mocked(stageEntityInputs).mockClear();
     const generate: UseGenerationReturn["generate"] = vi.fn()
       .mockRejectedValueOnce(new Error("queue refresh failed"))
       .mockRejectedValueOnce(new QueueAdmissionRejectedError("queue rejected"));

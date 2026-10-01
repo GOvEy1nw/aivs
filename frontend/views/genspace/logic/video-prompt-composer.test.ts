@@ -20,7 +20,7 @@ describe("compileVideoPrompt", () => {
     const simple = { schemaVersion: 1 as const, mode: "simple" as const, sequence: createVideoSequenceDraft() };
     const text = compileVideoPrompt({ brief: "@beth_dialogue \"Hello\"", composer: simple, entities: [beth], policy: { promptFormat: "plain", entityMediaMode: "text-only", voiceReference: false } });
     expect(text.ok).toBe(true);
-    expect(text.prompt).toContain('Beth, a blonde woman says "Hello"');
+    expect(text.prompt).toContain('Beth, a blonde woman, voice: warm voice says "Hello"');
     expect(text.entityInputs).toEqual([]);
     const invalid = compileVideoPrompt({ brief: '@beth_dialogue "Hello', composer: simple, entities: [beth], policy: { promptFormat: "plain", entityMediaMode: "text-only", voiceReference: false } });
     expect(invalid.error).toContain("closing quote");
@@ -47,18 +47,36 @@ describe("compileVideoPrompt", () => {
     expect(restored.prompt).not.toContain("[reference generation] subject_definitions:");
   });
 
-  it("keeps H3 entity media off the FL/task route while retaining natural entity prose", () => {
+  it("keeps H3 entity media with start or end images and rejects incompatible controls", () => {
     const simple = { schemaVersion: 1 as const, mode: "simple" as const, sequence: createVideoSequenceDraft() };
-    const compiled = compileVideoPrompt({ brief: "@beth", composer: simple, entities: [beth], retainedRoles: ["control_video"], policy: { promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: true } });
-    expect(compiled.entityInputs).toEqual([]);
-    expect(compiled.prompt).toContain("integrated_multimodal_description");
-    expect(compiled.prompt).toContain("Beth, a blonde woman");
+    for (const retainedRoles of [["start_image"], ["end_image"]]) {
+      const compiled = compileVideoPrompt({ brief: "@beth", composer: simple, entities: [beth], retainedRoles, policy: { promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: false } });
+      expect(compiled.ok).toBe(true);
+      expect(compiled.entityInputs).toHaveLength(1);
+      expect(compiled.entityInputs[0]?.alias).toBe("@image1");
+    }
+    const videoBeth: ReferenceEntity = {
+      ...beth,
+      visualReference: { ...beth.visualReference!, type: "video" },
+    };
+    expect(compileVideoPrompt({ brief: "@beth", composer: simple, entities: [videoBeth], retainedRoles: ["end_image"], policy: { promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: false } }).ok).toBe(true);
+    for (const retainedRoles of [["start_image", "reference_video"], ["start_image", "depth"]]) {
+      expect(compileVideoPrompt({ brief: "A scene", composer: simple, entities: [], retainedRoles, policy: { promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: false } }).error).toContain("start images cannot be combined");
+    }
+    expect(compileVideoPrompt({ brief: "@beth", composer: simple, entities: [videoBeth], retainedRoles: ["start_image"], policy: { promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: false } }).error).toContain("start images cannot be combined");
+    for (const retainedRoles of [["control_video"], ["audio_guide"]]) {
+      const unsupported = compileVideoPrompt({ brief: "@beth", composer: simple, entities: [beth], retainedRoles, policy: { promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: false } });
+      expect(unsupported.error).toContain("cannot be combined");
+    }
+    const manualReference = compileVideoPrompt({ brief: "A scene", composer: simple, entities: [], retainedRoles: ["reference_image", "audio_guide"], policy: { promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: false } });
+    expect(manualReference.error).toContain("cannot be combined");
   });
 
   it("derives quick-create media availability from backend-owned policy", () => {
     expect(getReferenceEntityMediaAvailability({ promptFormat: "plain", entityMediaMode: "text-only", voiceReference: false })).toEqual({ allowVisualMedia: false, allowVoiceMedia: false });
     expect(getReferenceEntityMediaAvailability({ promptFormat: "plain", entityMediaMode: "general-reference", voiceReference: false })).toEqual({ allowVisualMedia: true, allowVoiceMedia: false });
     expect(getReferenceEntityMediaAvailability({ promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: true })).toEqual({ allowVisualMedia: true, allowVoiceMedia: true });
+    expect(getReferenceEntityMediaAvailability({ promptFormat: "h3", entityMediaMode: "inline-reference", voiceReference: false })).toEqual({ allowVisualMedia: true, allowVoiceMedia: false });
   });
 
   it("validates the main brief before sequence staging and accepts only retained aliases", () => {

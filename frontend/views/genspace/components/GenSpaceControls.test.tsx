@@ -326,7 +326,7 @@ describe("GenSpace shared controls", () => {
     expect(onOpenStyles).toHaveBeenCalledOnce();
   });
 
-  it("keeps H3 references mutually exclusive with frame inputs and hides new FL2VA slots", () => {
+  it("keeps H3 references compatible with frame inputs and hides FL2VA slots", () => {
     const profile = { id: "minimax_h3_quality", inputMedia: { supportsImageInputs: true } } as ModelProfile;
     const { rerender } = render(
       <VideoMediaInputs
@@ -348,7 +348,7 @@ describe("GenSpace shared controls", () => {
     fireEvent.click(addMedia);
     expect(openCombinedInput).toHaveBeenCalledOnce();
 
-    expect((screen.getByRole("button", { name: "Start image" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Start image" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: "Control" })).toBeNull();
     expect(screen.getByRole("button", { name: "Remove @image1" })).toBeTruthy();
     expect(
@@ -370,7 +370,20 @@ describe("GenSpace shared controls", () => {
       />,
     );
 
-    expect((screen.getByRole("button", { name: "Add media" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Add media" }) as HTMLButtonElement).disabled).toBe(false);
+
+    rerender(
+      <VideoMediaInputs
+        inputs={[{ id: "video", alias: "@video1", type: "video", url: "file:///C:/reference.mp4", role: "reference_video" }]}
+        onChange={vi.fn()}
+        profile={profile}
+        useAudioTrack={false}
+        onUseAudioTrackChange={vi.fn()}
+        resolveInputFileUrl={vi.fn(async () => null)}
+      />,
+    );
+    expect((screen.getByRole("button", { name: "Start image" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "End image" }) as HTMLButtonElement).disabled).toBe(false);
 
     rerender(
       <VideoMediaInputs

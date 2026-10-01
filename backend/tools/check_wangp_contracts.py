@@ -45,19 +45,27 @@ def _methods(node: ast.ClassDef) -> dict[str, ast.FunctionDef]:
 
 
 def _profile_model_types(project_root: Path) -> set[str]:
-    model_types: set[str] = set()
+    # Packs include input-dependent routes (for example H3 Ref2VA) and explicitly
+    # distinguish processors from generation models. An SFX policy alone does not.
+    pack_tree = ast.parse((project_root / "backend" / "wangp_model_packs.py").read_text(encoding="utf-8"))
+    pack_node = next(
+        node for node in pack_tree.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == "PACKS"
+    )
+    if pack_node.value is None:
+        raise ValueError("curated PACKS metadata has no value")
+    packs = cast(dict[str, dict[str, object]], ast.literal_eval(pack_node.value))
+    processors = {pack["processor"] for pack in packs.values() if pack.get("kind") == "audio_processor"}
+    model_types = {
+        model_type
+        for pack in packs.values() if pack.get("kind") == "model"
+        for model_type in cast(list[object], pack.get("model_types", [pack.get("model_type")]))
+        if isinstance(model_type, str)
+    }
     for name in ("image_profiles.py", "video_profiles.py", "audio_profiles.py"):
         tree = ast.parse((project_root / "backend" / "model_profiles" / name).read_text(encoding="utf-8"))
-        sfx_model_types = {
-            keyword.value.value
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "ModelProfile"
-            and any(keyword.arg == "sfx" for keyword in node.keywords)
-            for keyword in node.keywords
-            if keyword.arg == "wangp_model_type" and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str)
-        }
         for node in ast.walk(tree):
-            if isinstance(node, ast.keyword) and node.arg == "wangp_model_type" and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) and node.value.value not in sfx_model_types:
+            if isinstance(node, ast.keyword) and node.arg == "wangp_model_type" and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) and node.value.value not in processors:
                 model_types.add(node.value.value)
     return model_types
 

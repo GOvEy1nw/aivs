@@ -6,6 +6,11 @@ import type { Asset } from "../../../types/project";
 import type { VideoToolId } from "../../../types/video-tools";
 import { VIDEO_TOOL_OPTIONS } from "../video/video-tools";
 import { GUIDE_MEDIA_ROLE_SET } from "../constants";
+import {
+  findGuideInput,
+  getAudioGuideRole,
+  getH3ReferenceState,
+} from "./media-inputs";
 import type { GenSpaceMediaInput } from "../types";
 
 export type GalleryHandoffTarget =
@@ -98,13 +103,6 @@ function isH3Profile(profile: ModelProfile | undefined) {
   return profile?.id === "minimax_h3_fast" || profile?.id === "minimax_h3_quality";
 }
 
-function hasH3References(inputs: readonly GenSpaceMediaInput[]) {
-  return inputs.some(({ role }) =>
-    role === "reference_image" || role === "reference_video" ||
-    role === "reference_audio" || role === "depth",
-  );
-}
-
 export function getGalleryHandoffDestinations({
   asset,
   imageProfile,
@@ -142,7 +140,7 @@ export function getGalleryHandoffDestinations({
 
   if (asset.type === "video") {
     const hasGuide = inputs.some((input) => GUIDE_MEDIA_ROLE_SET.has(input.role));
-    const h3References = hasH3References(inputs);
+    const h3References = isH3Profile(videoProfile) && getH3ReferenceState(inputs).hasReferenceMedia;
     const tools = videoProfile
       ? selectVideoEditOperations(videoProfile)
         .filter(({ id }) => id !== "retake")
@@ -178,11 +176,13 @@ export function getGalleryHandoffDestinations({
       speechProfile.speech.tts &&
       speechReferenceCount < speechProfile.speech.maxReferenceInputs,
   );
-  const hasGuide = inputs.some((input) => input.role === "audio_to_video");
+  const hasGuide = Boolean(findGuideInput(inputs));
+  const audioGuideRole = getAudioGuideRole(videoProfile?.inputMedia);
+  const h3References = isH3Profile(videoProfile) && getH3ReferenceState(inputs).hasReferenceMedia;
   return [
     ...(videoProfile && isAvailable(videoProfile) && videoProfile.capabilities.audioToVideo &&
       videoProfile.videoAudio.audioConditioning &&
-      !hasGuide
+      audioGuideRole && !hasGuide && !h3References
       ? withExcerpt("audio-guide", "Audio guide", <Music2 className="h-3.5 w-3.5" />, true)
       : []),
     ...(hasReferenceCapacity(inputs, videoProfile, "audio")

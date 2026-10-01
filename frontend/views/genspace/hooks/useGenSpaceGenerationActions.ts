@@ -180,6 +180,7 @@ export function useGenSpaceGenerationActions({
       endImagePath: images.find((item) => item.role === "end_image")?.path,
       controlImagePath: images.find((item) => item.role.startsWith("control_"))?.path,
       referenceImagePaths: images.filter((item) => item.role.startsWith("reference")).map((item) => item.path),
+      inputRoles: mode === "video" ? command.inputMedia.map((item) => item.role) : undefined,
       durationSeconds: "normalizedSettings" in command ? command.normalizedSettings.duration : undefined,
     };
   });

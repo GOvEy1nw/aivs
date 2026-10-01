@@ -23,6 +23,7 @@ export interface PromptEnhancementRequest {
   endImagePath?: string;
   controlImagePath?: string;
   referenceImagePaths: string[];
+  inputRoles?: string[];
   durationSeconds?: number;
 }
 

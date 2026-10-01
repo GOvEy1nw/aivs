@@ -53,6 +53,8 @@ AiVS is in active development. Director Mode V1 is available as a standalone wor
 		- Added Control Video/Audio support with video trim capabilities (note when a control video is added, the 'duration' setting turns to 'auto' and is controlled by the trim length).
 		- Retake is visible as **Retake (soon)** but disabled until WanGP supports it reliably.
 		- Added new reframe mode with a nice easy to use framing UI that takes a control video and then uses ltx outpaint lora to expand edges. <p align="center"><img src="https://github.com/GOvEy1nw/aivs/blob/dev/images/NewReframeVideoMode.png" width="80%"></p>
+- Audio generation:
+	- Local music, sound effects and speech workflows are available through WanGP, including up to three ordered speech voice references and Copy Settings.
 - Director Mode:
 	- Added a standalone workspace between GenSpace and Video Editor with the shared asset library, multiple Director timelines, contextual segment settings, preview playback and a frame-based timeline.
 	- Build videos from movable and resizable prompt segments, optional local/global prompts, key frames pinned to Start/Middle/End, or a frame-zero Continue Video segment. Gaps, segment reordering, ripple resizing and contextual split/delete are supported.
@@ -64,7 +66,6 @@ AiVS is in active development. Director Mode V1 is available as a standalone wor
 
 - Retake mode when WanGP support is ready
 - LoRA UI
-- Audio/TTS Gen
 - Production workflow
 
 ## Windows Release System Requirements

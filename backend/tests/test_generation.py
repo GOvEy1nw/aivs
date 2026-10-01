@@ -14,6 +14,7 @@ import pytest
 from pathlib import Path
 
 from api_types import GenerateImageRequest
+from services.audio_metadata import AudioMetadata
 from services.video_clip import VideoMetadata
 from tests.fakes.fake_wangp_bridge import FakeWanGPBridge
 
@@ -434,6 +435,32 @@ class TestGenerate:
         assert response.json()["error"] == "H3_DEPTH_REFERENCE_VIDEO_MIX"
         assert enable_wangp.video_calls == []
 
+    def test_h3_rejects_start_image_with_reference_video(
+        self, client, enable_wangp: FakeWanGPBridge, tmp_path: Path
+    ):
+        from PIL import Image
+
+        start = tmp_path / "start.png"
+        reference = tmp_path / "reference.mp4"
+        Image.new("RGB", (16, 16), color="red").save(start)
+        reference.write_bytes(b"fake-video")
+
+        response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "imagePath": str(start),
+                "inputMedia": [
+                    {"role": "reference_video", "path": str(reference), "type": "video"},
+                ],
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"].startswith("H3_START_IMAGE_REFERENCE_VIDEO_UNSUPPORTED")
+        assert enable_wangp.video_calls == []
+
     def test_h3_rejects_video_soundtrack_mixed_with_audio_reference(
         self, client, enable_wangp: FakeWanGPBridge
     ):
@@ -584,6 +611,126 @@ class TestGenerate:
         assert call.audio_prompt_type == "K1"
         assert call.reference_video_paths == [str(reference)]
         assert call.reference_audio_paths == []
+
+    def test_h3_rejects_unreadable_or_over_budget_full_references(
+        self, client, enable_wangp: FakeWanGPBridge, tmp_path: Path, monkeypatch
+    ):
+        from PIL import Image
+
+        short_video = tmp_path / "short.mp4"
+        first_video = tmp_path / "first.mp4"
+        second_video = tmp_path / "second.mp4"
+        missing_video = tmp_path / "missing.mp4"
+        nonfinite_video = tmp_path / "nonfinite.mp4"
+        for video in (short_video, first_video, second_video, missing_video, nonfinite_video):
+            video.write_bytes(b"fake-video")
+        first_audio = tmp_path / "first.wav"
+        second_audio = tmp_path / "second.wav"
+        for audio in (first_audio, second_audio):
+            audio.write_bytes(b"RIFF\x0c\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00")
+        first_image = tmp_path / "first.png"
+        second_image = tmp_path / "second.png"
+        Image.new("RGB", (16, 16), color="red").save(first_image)
+        Image.new("RGB", (16, 16), color="blue").save(second_image)
+
+        video_durations = {
+            str(short_video): 1.5,
+            str(first_video): 8.0,
+            str(second_video): 8.0,
+            str(missing_video): None,
+            str(nonfinite_video): float("nan"),
+        }
+        monkeypatch.setattr(
+            "handlers.video_generation_handler.probe_video_metadata",
+            lambda path: (
+                VideoMetadata(frame_count=120, duration_seconds=duration)
+                if (duration := video_durations[str(path)]) is not None
+                else None
+            ),
+        )
+        monkeypatch.setattr(
+            "handlers.video_generation_handler.probe_audio_metadata",
+            lambda path: AudioMetadata(
+                duration_seconds=1.5 if Path(path).name == "first.wav" else 8.0
+            ),
+        )
+
+        short_video_response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "inputMedia": [{"role": "reference_video", "path": str(short_video), "type": "video"}],
+            },
+        )
+        assert short_video_response.status_code == 400
+        assert short_video_response.json()["error"] == "H3_REFERENCE_DURATION_LIMIT"
+
+        missing_video_response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "inputMedia": [{"role": "reference_video", "path": str(missing_video), "type": "video"}],
+            },
+        )
+        assert missing_video_response.status_code == 400
+        assert missing_video_response.json()["error"] == "H3_REFERENCE_DURATION_UNAVAILABLE"
+
+        nonfinite_video_response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "inputMedia": [{"role": "reference_video", "path": str(nonfinite_video), "type": "video"}],
+            },
+        )
+        assert nonfinite_video_response.status_code == 400
+        assert nonfinite_video_response.json()["error"] == "H3_REFERENCE_DURATION_UNAVAILABLE"
+
+        video_budget_response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "inputMedia": [
+                    {"role": "reference_video", "path": str(first_video), "type": "video"},
+                    {"role": "reference_video", "path": str(second_video), "type": "video"},
+                ],
+            },
+        )
+        assert video_budget_response.status_code == 400
+        assert video_budget_response.json()["error"] == "H3_REFERENCE_TOTAL_DURATION_LIMIT"
+
+        audio_duration_response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "inputMedia": [
+                    {"role": "reference_image", "path": str(first_image), "type": "image"},
+                    {"role": "reference_audio", "path": str(first_audio), "type": "audio"},
+                ],
+            },
+        )
+        assert audio_duration_response.status_code == 400
+        assert audio_duration_response.json()["error"] == "H3_REFERENCE_DURATION_LIMIT"
+
+        audio_budget_response = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "modelProfileId": "minimax_h3_quality",
+                "inputMedia": [
+                    {"role": "reference_image", "path": str(first_image), "type": "image"},
+                    {"role": "reference_image", "path": str(second_image), "type": "image"},
+                    {"role": "reference_audio", "path": str(second_audio), "type": "audio"},
+                    {"role": "reference_audio", "path": str(second_audio), "type": "audio"},
+                ],
+            },
+        )
+        assert audio_budget_response.status_code == 400
+        assert audio_budget_response.json()["error"] == "H3_REFERENCE_TOTAL_DURATION_LIMIT"
 
     def test_video_profile_square_aspect_routes_to_ltx2(
         self, client, enable_wangp: FakeWanGPBridge

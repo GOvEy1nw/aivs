@@ -6,9 +6,13 @@ from pathlib import Path
 from threading import RLock
 
 from _routes._errors import HTTPError
-from api_types import EnhancePromptRequest, EnhancePromptResponse
+from api_types import EnhancePromptRequest, EnhancePromptResponse, VideoInputMediaRole
 from handlers.base import StateHandlerBase
 from handlers.generation_handler import GenerationHandler
+from handlers.video_generation_handler import (
+    resolve_effective_video_model_type,
+    validate_video_input_roles,
+)
 from model_profiles.profiles import get_image_profile, get_video_profile
 from runtime_config.runtime_config import RuntimeConfig
 from services.wangp_bridge import WanGPBridge
@@ -75,4 +79,12 @@ class PromptEnhancementHandler(StateHandlerBase):
             raise HTTPError(400, f"UNKNOWN_MODEL_PROFILE: {req.modelProfileId}")
         if not profile.visible:
             raise HTTPError(400, f"MODEL_PROFILE_HIDDEN: {req.modelProfileId}")
-        return profile.wangp_model_type
+        input_roles: set[VideoInputMediaRole] = set(req.inputRoles)
+        if req.inputImagePath:
+            input_roles.add("start_image")
+        if req.endImagePath:
+            input_roles.add("end_image")
+        if req.referenceImagePaths:
+            input_roles.add("reference_image")
+        validate_video_input_roles(profile, input_roles)
+        return resolve_effective_video_model_type(profile, input_roles)

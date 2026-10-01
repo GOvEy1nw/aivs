@@ -4,6 +4,7 @@ import type { GenSpaceMediaInput } from "../types";
 import { VIDEO_GUIDE_ROLE_OPTIONS } from "../constants";
 import {
   findGuideInput,
+  getAudioGuideRole,
   getH3ReferenceAvailability,
   getH3ReferenceState,
   getH3PromptAliases,
@@ -90,7 +91,16 @@ describe("GenSpace media input logic", () => {
   it("keeps H3 reference capacity and audio balance available only when valid", () => {
     expect(getH3ReferenceAvailability([])).toEqual({ image: true, video: true, audio: false });
     expect(getH3ReferenceAvailability([input("image", "reference_image", "image")])).toMatchObject({ audio: true });
-    expect(getH3ReferenceAvailability([input("frame", "start_image", "image")])).toEqual({ image: false, video: false, audio: false });
+    expect(getH3ReferenceAvailability([input("start", "start_image", "image")])).toEqual({ image: true, video: false, audio: false });
+    expect(getH3ReferenceAvailability([input("end", "end_image", "image")])).toEqual({ image: true, video: true, audio: false });
+    expect(getH3ReferenceState([input("video", "reference_video", "video")]).hasReferenceVideo).toBe(true);
+    expect(getH3ReferenceAvailability([input("control", "control_video", "video")])).toEqual({ image: false, video: false, audio: false });
+  });
+
+  it("uses the selected profile's supported audio guide role", () => {
+    expect(getAudioGuideRole({ roles: [{ role: "audio_guide" }] } as ModelProfileInputMedia)).toBe("audio_guide");
+    expect(getAudioGuideRole({ roles: [{ role: "audio_to_video" }] } as ModelProfileInputMedia)).toBe("audio_to_video");
+    expect(getAudioGuideRole({ supportsImageInputs: false, tooltipLabel: "", maxImages: 0, defaultRole: "", roles: [] })).toBeUndefined();
   });
 
   it("allows three H3 video and audio references within their separate caps", () => {

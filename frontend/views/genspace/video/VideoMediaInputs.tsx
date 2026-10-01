@@ -16,8 +16,8 @@ import {
 } from "../constants";
 import {
   findGuideInput,
+  getAudioGuideRole,
   getH3ReferenceState,
-  getH3ReferenceAvailability,
   normalizeVideoInputsForProfile,
   nextH3MediaAlias,
   removeMediaInput,
@@ -267,6 +267,7 @@ export function VideoMediaInputs({
   };
 
   const guideKind = guide?.type === "audio" ? "audio" : "video";
+  const audioGuideRole = getAudioGuideRole(profile?.inputMedia);
   const guideOptions =
     guideKind === "audio"
       ? [...AUDIO_GUIDE_ROLE_OPTIONS]
@@ -360,10 +361,15 @@ export function VideoMediaInputs({
                 const entry = libraryMedia.find(
                   ({ id }) => id === event.currentTarget.value,
                 );
-                if (entry) {
+                const role = entry?.type === "audio"
+                  ? audioGuideRole
+                  : entry
+                    ? "human_motion"
+                    : undefined;
+                if (entry && role) {
                   setSlot(
                     entry.url,
-                    entry.type === "audio" ? "audio_to_video" : "human_motion",
+                    role,
                     entry.type,
                   );
                 }
@@ -372,7 +378,7 @@ export function VideoMediaInputs({
               className="mt-1 w-full rounded bg-input px-2 py-1.5 text-sm text-foreground"
             >
               <option value="">Choose saved media…</option>
-              {libraryMedia.map((entry) => (
+              {libraryMedia.filter((entry) => entry.type !== "audio" || audioGuideRole).map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.name} ({entry.type})
                 </option>
@@ -541,15 +547,17 @@ function H3MediaInputs({
       const reference = H3_REFERENCE_TYPES.find((entry) => entry.role === role);
       const id = crypto.randomUUID();
       onChange((current) => {
+        const currentReferenceState = getH3ReferenceState(current);
         const currentHasReferences = current.some(
           (input) =>
             H3_REFERENCE_TYPES.some((entry) => entry.role === input.role) ||
             input.role === "depth",
         );
         if (
-          (reference && !getH3ReferenceAvailability(current)[type]) ||
+          (reference && !currentReferenceState.availability[type]) ||
+          (role === "start_image" && currentReferenceState.hasReferenceVideo) ||
           (role === "control_video" && current.some((input) => input.role === "control_video")) ||
-          (!reference && currentHasReferences)
+          (role === "control_video" && currentHasReferences)
         ) {
           return current;
         }
@@ -681,6 +689,10 @@ function H3MediaInputs({
         <div className="grid grid-cols-2 gap-2">
           {(["start_image", "end_image"] as const).map((role) => {
             const item = inputs.find((input) => input.role === role);
+            const startImageBlocked =
+              role === "start_image" &&
+              !item &&
+              referenceState.hasReferenceVideo;
             return (
               <CroppableMediaInputSlot
                 key={role}
@@ -695,12 +707,12 @@ function H3MediaInputs({
                     : undefined
                 }
                 title={
-                  hasReferences && !item
-                    ? "Remove references before adding a frame"
+                  startImageBlocked
+                    ? "Remove reference video or depth before adding a start image"
                     : "Click or drop an image"
                 }
-                disabled={!item && hasReferences}
                 sizeClassName="aspect-square w-full"
+                disabled={startImageBlocked}
                 active={activeId === role}
                 inputRef={imageInputRef}
                 onAdd={() => setPendingRole(role)}

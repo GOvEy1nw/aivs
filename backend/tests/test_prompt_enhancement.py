@@ -59,3 +59,71 @@ def test_enhance_prompt_passes_input_image(client, wangp_bridge, tmp_path: Path)
     assert call.control_image_path == str(control_image_path)
     assert call.reference_image_paths == [str(path) for path in reference_image_paths]
     assert call.duration_seconds == 4.5
+
+
+def test_enhance_h3_uses_the_effective_reference_route(client, wangp_bridge, tmp_path: Path):
+    from PIL import Image
+
+    reference_image = tmp_path / "reference.png"
+    Image.new("RGB", (16, 16), color="blue").save(reference_image)
+
+    for payload in (
+        {"referenceImagePaths": [str(reference_image)]},
+        {"inputRoles": ["reference_video"]},
+        {"inputRoles": ["reference_audio"]},
+        {"inputRoles": ["depth"]},
+    ):
+        response = client.post(
+            "/api/enhance-prompt",
+            json={
+                "prompt": "a cinematic scene",
+                "mode": "video",
+                "modelProfileId": "minimax_h3_quality",
+                **payload,
+            },
+        )
+
+        assert response.status_code == 200
+        assert wangp_bridge.enhance_prompt_calls[-1].model_type == "minimax_h3_ref2va_pruned"
+
+    rejected = client.post(
+        "/api/enhance-prompt",
+        json={
+            "prompt": "a cinematic scene",
+            "mode": "video",
+            "modelProfileId": "minimax_h3_quality",
+            "inputRoles": ["reference_voice"],
+        },
+    )
+
+    assert rejected.status_code == 400
+    assert rejected.json()["error"] == "Role reference_voice is not supported by this model profile"
+
+    mixed = client.post(
+        "/api/enhance-prompt",
+        json={
+            "prompt": "a cinematic scene",
+            "mode": "video",
+            "modelProfileId": "minimax_h3_quality",
+            "inputRoles": ["reference_image", "control_video"],
+        },
+    )
+
+    assert mixed.status_code == 400
+    assert mixed.json()["error"] == "H3_REF2VA_FL2VA_MEDIA_MIX"
+
+    unsupported_start_and_video = client.post(
+        "/api/enhance-prompt",
+        json={
+            "prompt": "a cinematic scene",
+            "mode": "video",
+            "modelProfileId": "minimax_h3_quality",
+            "inputImagePath": str(reference_image),
+            "inputRoles": ["reference_video"],
+        },
+    )
+
+    assert unsupported_start_and_video.status_code == 400
+    assert unsupported_start_and_video.json()["error"].startswith(
+        "H3_START_IMAGE_REFERENCE_VIDEO_UNSUPPORTED"
+    )

@@ -197,6 +197,7 @@ class TestCuratedProfiles:
         assert profile.input_media.max_reference_videos == 3
         assert profile.input_media.max_reference_audios == 3
         assert profile.input_media.max_combined_references == 12
+        assert profile.prompt_composer.voice_reference is False
         assert profile.video_audio.output_audio is True
         assert profile.license is not None
         assert profile.license.license_url == "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"

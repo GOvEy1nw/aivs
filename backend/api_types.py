@@ -63,6 +63,23 @@ VideoCameraMotion = Literal[
     "static",
     "focus_shift",
 ]
+VideoInputMediaRole: TypeAlias = Literal[
+    "start_image",
+    "end_image",
+    "control_video",
+    "audio_guide",
+    "human_motion",
+    "human_motion_pose",
+    "depth",
+    "canny_edges",
+    "sdr_to_hdr",
+    "continue_video",
+    "audio_to_video",
+    "reference_voice",
+    "reference_image",
+    "reference_video",
+    "reference_audio",
+]
 
 
 # ============================================================
@@ -209,6 +226,10 @@ class ComposeMusicLyricsResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+def _default_video_input_roles() -> list[VideoInputMediaRole]:
+    return []
+
+
 class EnhancePromptRequest(BaseModel):
     prompt: NonEmptyPrompt
     mode: Literal["image", "video"]
@@ -217,6 +238,7 @@ class EnhancePromptRequest(BaseModel):
     endImagePath: str | None = None
     controlImagePath: str | None = None
     referenceImagePaths: list[str] = Field(default_factory=list, max_length=10)
+    inputRoles: list[VideoInputMediaRole] = Field(default_factory=_default_video_input_roles, max_length=14)
     durationSeconds: float | None = Field(default=None, gt=0, le=1200, allow_inf_nan=False)
 
 
@@ -728,23 +750,7 @@ class GenerateVideoInputMedia(BaseModel):
     trimDuration: float | None = Field(default=None, gt=0)
     crop: MediaCrop | None = None
     useAudioTrack: bool = False
-    role: Literal[
-        "start_image",
-        "end_image",
-        "control_video",
-        "audio_guide",
-        "human_motion",
-        "human_motion_pose",
-        "depth",
-        "canny_edges",
-        "sdr_to_hdr",
-        "continue_video",
-        "audio_to_video",
-        "reference_voice",
-        "reference_image",
-        "reference_video",
-        "reference_audio",
-    ]
+    role: VideoInputMediaRole
 
     @model_validator(mode="after")
     def validate_crop_media_type(self) -> "GenerateVideoInputMedia":

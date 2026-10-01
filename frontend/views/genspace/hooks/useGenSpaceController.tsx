@@ -46,6 +46,7 @@ import { getAssetModelId } from "../logic/generation-assets";
 import {
   getDefaultImageInputRole,
   findGuideInput,
+  getAudioGuideRole,
   replaceGuideInput,
   replaceInputForRole,
 } from "../logic/media-inputs";
@@ -1025,10 +1026,21 @@ export function useGenSpaceController(isActive: boolean) {
         return;
       }
       if (destination.target === "audio-guide") {
+        const audioGuideRole = getAudioGuideRole(selectedVideoProfile?.inputMedia);
+        if (!audioGuideRole) {
+          setLocalError("The selected video profile does not support an audio guide.");
+          return;
+        }
+        if (findGuideInput(imageInputs)) {
+          setLocalError("A guide is already in use. Remove it before adding an audio guide.");
+          return;
+        }
         setMode("video");
         setVideoMode("generate");
         setImageInputs((current) =>
-          replaceGuideInput(current, { ...input, role: "audio_to_video" }),
+          findGuideInput(current)
+            ? current
+            : [...current, { ...input, role: audioGuideRole }],
         );
         return;
       }

@@ -7,17 +7,24 @@ import math
 import re
 import secrets
 import uuid
+from collections.abc import Collection
 from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, cast
 
-from api_types import GenerateVideoInputMedia, GenerateVideoRequest, GenerateVideoResponse
+from api_types import (
+    GenerateVideoInputMedia,
+    GenerateVideoRequest,
+    GenerateVideoResponse,
+    VideoInputMediaRole,
+)
 from _routes._errors import HTTPError
 from handlers.base import StateHandlerBase
 from handlers.generation_handler import GenerationHandler
 from model_profiles import get_video_profile, is_combination_supported, resolve_resolution
 from model_profiles.profiles import AspectRatio, ModelProfile, ResolutionTier, StyleDefinition
 from services.media_crop import crop_image_media, crop_video_media
+from services.audio_metadata import probe_audio_metadata
 from services.wangp_bridge import WanGPBridge
 from services.reframe_wangp_mapping import ReframePadding, map_reframe_to_wangp
 from services.video_clip import extract_audio_clip, extract_video_clip, probe_video_metadata
@@ -57,6 +64,75 @@ def _h3_reference_media(req: GenerateVideoRequest) -> list[GenerateVideoInputMed
     return [media for media in req.inputMedia if media.role in _H3_REFERENCE_ROLES]
 
 
+def resolve_effective_video_model_type(
+    profile: ModelProfile,
+    input_roles: Collection[VideoInputMediaRole],
+) -> str:
+    if profile.id in _H3_PROFILE_IDS and _H3_REFERENCE_ROLES.intersection(input_roles):
+        return "minimax_h3_ref2va_pruned"
+    return profile.wangp_model_type
+
+
+def validate_video_input_roles(
+    profile: ModelProfile,
+    input_roles: Collection[VideoInputMediaRole],
+) -> None:
+    if not input_roles:
+        return
+    allowed_roles = {role_def.role for role_def in profile.input_media.roles}
+    if profile.start_image:
+        allowed_roles.add("start_image")
+    if profile.end_image:
+        allowed_roles.add("end_image")
+    if profile.control_video:
+        allowed_roles.add("control_video")
+    if profile.audio_to_video:
+        allowed_roles.add("audio_guide")
+    if profile.id in _H3_PROFILE_IDS:
+        allowed_roles.update(_H3_REFERENCE_ROLES)
+        if _H3_REFERENCE_ROLES.intersection(input_roles) and _H3_FL_ONLY_ROLES.intersection(input_roles):
+            raise HTTPError(400, "H3_REF2VA_FL2VA_MEDIA_MIX")
+        if "start_image" in input_roles and {"reference_video", "depth"}.intersection(input_roles):
+            raise HTTPError(
+                400,
+                "H3_START_IMAGE_REFERENCE_VIDEO_UNSUPPORTED: Use an end frame or image reference, or remove the start frame/reference video.",
+            )
+    for role in input_roles:
+        if role not in allowed_roles:
+            raise HTTPError(400, f"Role {role} is not supported by this model profile")
+
+
+def _validate_h3_reference_durations(
+    references: Collection[GenerateVideoInputMedia],
+) -> dict[int, float]:
+    durations: dict[int, float] = {}
+    totals = {"video": 0.0, "audio": 0.0}
+    for media in references:
+        if media.role in {"reference_video", "depth"}:
+            metadata = probe_video_metadata(validate_video_file(media.path))
+            duration = metadata.duration_seconds if metadata is not None else None
+            kind = "video"
+        elif media.role == "reference_audio":
+            duration = probe_audio_metadata(validate_audio_file(media.path)).duration_seconds
+            kind = "audio"
+        else:
+            continue
+        if duration is None or not math.isfinite(duration):
+            raise HTTPError(400, "H3_REFERENCE_DURATION_UNAVAILABLE")
+        if media.trimDuration is not None:
+            _h3_excerpt_position(media, duration)
+            effective_duration = media.trimDuration
+        else:
+            effective_duration = duration
+        if effective_duration < 2:
+            raise HTTPError(400, "H3_REFERENCE_DURATION_LIMIT")
+        totals[kind] += effective_duration
+        durations[id(media)] = duration
+    if totals["video"] > 15 or totals["audio"] > 15:
+        raise HTTPError(400, "H3_REFERENCE_TOTAL_DURATION_LIMIT")
+    return durations
+
+
 def _h3_excerpt_position(media: GenerateVideoInputMedia, duration_seconds: float | None) -> str:
     duration = media.trimDuration
     if duration is None:
@@ -91,8 +167,6 @@ def _validate_and_compile_h3_prompt(
 
     references = _h3_reference_media(req)
     uses_ref2va = bool(references)
-    if uses_ref2va and any(media.role in _H3_FL_ONLY_ROLES for media in req.inputMedia):
-        raise HTTPError(400, "H3_REF2VA_FL2VA_MEDIA_MIX")
     if (
         not uses_ref2va
         and req.useAudioTrack
@@ -136,23 +210,6 @@ def _validate_and_compile_h3_prompt(
     visual_count = len(by_role["reference_image"]) + len(active_videos)
     if len(by_role["reference_audio"]) > visual_count:
         raise HTTPError(400, "H3_AUDIO_REFERENCE_REQUIRES_VISUAL_REFERENCE")
-    video_trimmed_total = 0.0
-    audio_trimmed_total = 0.0
-    for media in active_videos:
-        if media.trimDuration is None:
-            continue
-        if not 2 <= media.trimDuration <= 15:
-            raise HTTPError(400, "H3_REFERENCE_DURATION_LIMIT")
-        video_trimmed_total += media.trimDuration
-    for media in by_role["reference_audio"]:
-        if media.trimDuration is None:
-            continue
-        if not 2 <= media.trimDuration <= 15:
-            raise HTTPError(400, "H3_REFERENCE_DURATION_LIMIT")
-        audio_trimmed_total += media.trimDuration
-    if video_trimmed_total > 15 or audio_trimmed_total > 15:
-        raise HTTPError(400, "H3_REFERENCE_TOTAL_DURATION_LIMIT")
-
     aliases: dict[str, str] = {}
     expected_alias_kind = {
         "reference_image": "image",
@@ -250,6 +307,7 @@ class VideoGenerationHandler(StateHandlerBase):
             wangp_prompt, duration = self._resolve_prompt_and_duration(req, duration)
 
         h3_uses_ref2va = False
+        h3_reference_durations: dict[int, float] = {}
 
         start_image_path = None
         end_image_path = None
@@ -355,9 +413,20 @@ class VideoGenerationHandler(StateHandlerBase):
             style = self._resolve_style(profile, req.styleId, is_reframe=is_reframe, video_tool=req.videoTool)
             if style is not None and style.style_prompt is not None:
                 wangp_prompt = f"{wangp_prompt.rstrip()}\n{style.style_prompt}"
+            self._validate_video_profile_request(
+                profile,
+                req,
+                start_image_path=start_image_path,
+                end_image_path=end_image_path,
+                control_video_path=control_video_path,
+                audio_path=audio_path,
+            )
             if is_h3:
                 wangp_prompt, h3_uses_ref2va = _validate_and_compile_h3_prompt(req, wangp_prompt)
                 if h3_uses_ref2va:
+                    h3_reference_durations = _validate_h3_reference_durations(
+                        _h3_reference_media(req)
+                    )
                     reference_videos = [media for media in req.inputMedia if media.role in {"reference_video", "depth"}]
                     audio_count = sum(media.role == "reference_audio" for media in req.inputMedia)
                     video_prompt_type = "DV" if any(media.role == "depth" for media in reference_videos) else ("V1-U" if any(media.trimDuration is not None for media in reference_videos) else "V+*-U" if len(reference_videos) == 3 else "V+-U" if len(reference_videos) == 2 else "V-U" if reference_videos else None)
@@ -379,14 +448,6 @@ class VideoGenerationHandler(StateHandlerBase):
                 if not profile.wangp_metadata.capabilities.get("outpainting", False):
                     raise HTTPError(400, "REFRAME_NOT_SUPPORTED")
 
-            self._validate_video_profile_request(
-                profile,
-                req,
-                start_image_path=start_image_path,
-                end_image_path=end_image_path,
-                control_video_path=control_video_path,
-                audio_path=audio_path,
-            )
             resolution_tier = cast(ResolutionTier, req.resolution)
             request_aspect_ratio: AspectRatio = req.aspectRatio
             if is_reframe:
@@ -588,9 +649,8 @@ class VideoGenerationHandler(StateHandlerBase):
                         validated_path = str(validate_video_file(effective_path))
                         validated_reference_videos.append(validated_path)
                         if media.trimDuration is not None:
-                            metadata = probe_video_metadata(validated_path)
                             h3_video_excerpt_positions.append(
-                                _h3_excerpt_position(media, metadata.duration_seconds if metadata else None)
+                                _h3_excerpt_position(media, h3_reference_durations.get(id(media)))
                             )
                     elif media.role == "reference_audio":
                         validated_path = str(validate_audio_file(effective_path))
@@ -599,10 +659,9 @@ class VideoGenerationHandler(StateHandlerBase):
                     h3_audio_excerpt_positions = h3_video_excerpt_positions.copy()
 
             settings = self.state.app_settings.model_copy(deep=True)
-            active_model_type = (
-                "minimax_h3_ref2va_pruned"
-                if is_h3 and h3_uses_ref2va
-                else profile.wangp_model_type
+            active_model_type = resolve_effective_video_model_type(
+                profile,
+                {media.role for media in req.inputMedia},
             )
             resolved_profile_settings = self._resolve_wangp_profile_settings(
                 profile, active_model_type
@@ -818,19 +877,10 @@ class VideoGenerationHandler(StateHandlerBase):
         if not is_combination_supported(profile, req.resolution, req.aspectRatio):
             raise HTTPError(400, "NO_CURATED_VIDEO_RESOLUTION")
 
-        if req.inputMedia and profile.input_media and profile.input_media.supports_image_inputs:
-            allowed_roles = {role_def.role for role_def in profile.input_media.roles}
-            if profile.start_image:
-                allowed_roles.add("start_image")
-            if profile.end_image:
-                allowed_roles.add("end_image")
-            if profile.control_video:
-                allowed_roles.add("control_video")
-            if profile.audio_to_video:
-                allowed_roles.add("audio_guide")
-            for media in req.inputMedia:
-                if media.role not in allowed_roles:
-                    raise HTTPError(400, f"Role {media.role} is not supported by this model profile")
+        input_roles: set[VideoInputMediaRole] = {media.role for media in req.inputMedia}
+        if start_image_path:
+            input_roles.add("start_image")
+        validate_video_input_roles(profile, input_roles)
 
         if start_image_path and not (profile.start_image or profile.image_to_video or profile.video_continuation):
             raise HTTPError(400, "VIDEO_IMAGE_INPUT_NOT_SUPPORTED")

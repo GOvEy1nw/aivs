@@ -398,7 +398,7 @@ _h3_quality_profile = ModelProfile(
             default_role="start_image",
             roles=(START_IMAGE_ROLE, END_IMAGE_ROLE, CONTROL_VIDEO_ROLE, AUDIO_GUIDE_ROLE, H3_REFERENCE_IMAGE_ROLE, H3_REFERENCE_VIDEO_ROLE, H3_REFERENCE_AUDIO_ROLE),
         ),
-        prompt_composer=PromptComposerPolicy(prompt_format="h3", entity_media_mode="inline-reference", voice_reference=True),
+        prompt_composer=PromptComposerPolicy(prompt_format="h3", entity_media_mode="inline-reference", voice_reference=False),
         default_aspect_ratio="16:9",
         default_resolution_tier="720p",
         allowed_aspect_ratios=CURATED_ASPECT_RATIOS,

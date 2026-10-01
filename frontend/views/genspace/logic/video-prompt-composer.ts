@@ -2,6 +2,11 @@ import type {
   ReferenceEntity,
   ReferenceEntitySnapshot,
 } from "../../../../shared/reference-library";
+import {
+  hasH3ReferenceConflict,
+  hasH3ReferenceMedia,
+  hasH3StartImageReferenceVideoConflict,
+} from "./media-inputs";
 import type {
   VideoComposerStateV1,
   VideoSequenceDraftV1,
@@ -109,7 +114,10 @@ function replaceTokens(text: string, entities: readonly ReferenceEntity[], detai
       if (!dialogue.includes(entity)) dialogue.push(entity);
     } else if (!visual.includes(entity)) visual.push(entity);
     const description = detailed && !used.slice(0, -1).includes(entity) && entity.visualDescription ? `, ${entity.visualDescription}` : "";
-    return dialogueToken ? `${entity.name}${description} says "${words}"` : `${entity.name}${description}`;
+    const voice = dialogueToken && entity.kind === "cast" && entity.voiceDescription
+      ? `, voice: ${entity.voiceDescription}`
+      : "";
+    return dialogueToken ? `${entity.name}${description}${voice} says "${words}"` : `${entity.name}${description}`;
   });
   return { text: expanded, used, dialogue, visual, error };
 }
@@ -227,15 +235,31 @@ export function compileVideoPrompt({ brief, composer, entities, policy, reserved
     addUnique(dialogue, sequenceResult.dialogue);
   }
   const mediaBacked = visual.filter((entity) => entity.visualReference);
-  const h3TaskInput = retainedRoles.some((role) => ["start_image", "end_image", "control_video", "audio_guide", "control_audio"].includes(role));
-  const canSubmitEntityMedia = policy.promptFormat !== "h3" || !h3TaskInput;
-  const visuals = mediaBacked.filter(() => policy.entityMediaMode !== "text-only" && canSubmitEntityMedia);
-  const voices = dialogue.filter((entity): entity is Extract<ReferenceEntity, { kind: "cast" }> => entity.kind === "cast" && !!entity.voiceReference && policy.voiceReference && policy.entityMediaMode === "inline-reference" && canSubmitEntityMedia);
-  if (voices.length) return { ok: false, entityInputs: [], snapshots: [], warnings: [], error: "Voice reference media is unavailable because this video profile has no verified speaker-to-audio binding." };
+  const h3TaskInput = policy.promptFormat === "h3" && hasH3ReferenceConflict(retainedRoles);
+  const visuals = mediaBacked.filter(() => policy.entityMediaMode !== "text-only");
+  const h3StartImageReferenceVideoConflict =
+    policy.promptFormat === "h3" &&
+    hasH3StartImageReferenceVideoConflict([
+      ...retainedRoles,
+      ...visuals.map((entity) =>
+        entity.visualReference?.type === "video"
+          ? "reference_video"
+          : "reference_image",
+      ),
+    ]);
+  const hasUnsupportedVoiceMedia = dialogue.some(
+    (entity) =>
+      entity.kind === "cast" &&
+      !!entity.voiceReference &&
+      policy.voiceReference &&
+      policy.entityMediaMode === "inline-reference",
+  );
+  if (hasUnsupportedVoiceMedia) return { ok: false, entityInputs: [], snapshots: [], warnings: [], error: "Voice reference media is unavailable because this video profile has no verified speaker-to-audio binding." };
+  if (h3StartImageReferenceVideoConflict) return { ok: false, entityInputs: [], snapshots: [], warnings: [], error: "H3 start images cannot be combined with reference video or depth inputs." };
+  if (h3TaskInput && (hasH3ReferenceMedia(retainedRoles) || visuals.length)) return { ok: false, entityInputs: [], snapshots: [], warnings: [], error: "H3 control video and audio guide inputs cannot be combined with reference media." };
   if (policy.entityMediaMode === "general-reference" && visuals.length > 3) return { ok: false, entityInputs: [], snapshots: [], warnings: [], error: "The selected model supports up to three entity reference media items." };
 
   const warnings: string[] = [];
-  if (h3TaskInput && mediaBacked.length) warnings.push("Entity media was omitted because the retained H3 task input uses the incompatible FL route.");
   const entityInputs: CompiledEntityInput[] = [];
   const aliases = new Map<string, string>();
   const occupied = new Set(allowedAliases);
@@ -251,10 +275,6 @@ export function compileVideoPrompt({ brief, composer, entities, policy, reserved
     const alias = nextAlias(media.type);
     aliases.set(entity.id, alias);
     entityInputs.push({ id: `reference-${entity.id}`, url: media.url, path: media.path, role: media.type === "image" ? "reference_image" : "reference_video", type: media.type, alias });
-  }
-  for (const entity of voices) {
-    const media = entity.voiceReference!;
-    entityInputs.push({ id: `reference-voice-${entity.id}`, url: media.url, path: media.path, role: "reference_audio", type: "audio", alias: nextAlias("audio") });
   }
   const referenceSnapshots = used.map(snapshotReferenceEntity);
   if (policy.entityMediaMode === "text-only" && mediaBacked.length) warnings.push("This model uses entity names and descriptions only; entity media was not submitted.");

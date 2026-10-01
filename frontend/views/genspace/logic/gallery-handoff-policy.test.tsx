@@ -15,6 +15,7 @@ const profile = {
     maxReferenceVideos: 1,
     maxReferenceAudios: 1,
     roles: [
+      { role: "audio_to_video" },
       { role: "reference_video" },
       { role: "reference_audio" },
     ],
@@ -61,6 +62,47 @@ describe("gallery handoff policy", () => {
       ["video-reference", true],
       ["video-tool:reframe", false],
     ]);
+  });
+
+  it("does not offer an audio guide when any guide slot is occupied", () => {
+    const targets = getGalleryHandoffDestinations({
+      asset: { type: "audio" },
+      imageProfile: undefined,
+      videoProfile: {
+        ...profile,
+        inputMedia: {
+          ...profile.inputMedia,
+          roles: [{ role: "audio_guide", label: "Audio guide", description: "", kind: "control" }],
+        },
+      },
+      speechProfile: undefined,
+      inputs: [{ id: "motion", url: "file:///motion.mp4", role: "human_motion", type: "video" }],
+      speechReferenceCount: 0,
+      hasEditProfile: false,
+    });
+
+    expect(targets.some(({ target }) => target === "audio-guide")).toBe(false);
+  });
+
+  it("does not offer an H3 audio guide alongside manual reference media", () => {
+    const targets = getGalleryHandoffDestinations({
+      asset: { type: "audio" },
+      imageProfile: undefined,
+      videoProfile: {
+        ...profile,
+        id: "minimax_h3_quality",
+        inputMedia: {
+          ...profile.inputMedia,
+          roles: [{ role: "audio_guide", label: "Audio guide", description: "", kind: "control" }],
+        },
+      },
+      speechProfile: undefined,
+      inputs: [{ id: "image", url: "file:///reference.png", role: "reference_image", type: "image" }],
+      speechReferenceCount: 0,
+      hasEditProfile: false,
+    });
+
+    expect(targets.some(({ target }) => target === "audio-guide")).toBe(false);
   });
 
   it("offers the existing LTX motion-guide role as a full video only", () => {

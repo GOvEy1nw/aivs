@@ -77,9 +77,51 @@ export function removeMediaInput(
 }
 
 export function findGuideInput(
-  inputs: GenSpaceMediaInput[],
+  inputs: readonly GenSpaceMediaInput[],
 ): GenSpaceMediaInput | undefined {
   return inputs.find(({ role }) => GUIDE_MEDIA_ROLE_SET.has(role));
+}
+
+export function getAudioGuideRole(
+  policy: ModelProfileInputMedia | undefined,
+): "audio_guide" | "audio_to_video" | undefined {
+  if (!policy) return undefined;
+  return policy?.roles.some(({ role }) => role === "audio_guide")
+    ? "audio_guide"
+    : policy.roles.some(({ role }) => role === "audio_to_video")
+      ? "audio_to_video"
+      : undefined;
+}
+
+const H3_REFERENCE_CONFLICT_ROLES = new Set([
+  "control_video",
+  "audio_guide",
+  // Legacy saved inputs may still contain this old control role.
+  "control_audio",
+]);
+
+export function hasH3ReferenceConflict(roles: readonly string[]): boolean {
+  return roles.some((role) => H3_REFERENCE_CONFLICT_ROLES.has(role));
+}
+
+const H3_REFERENCE_MEDIA_ROLES = new Set([
+  "reference_image",
+  "reference_video",
+  "reference_audio",
+  "depth",
+]);
+
+export function hasH3ReferenceMedia(roles: readonly string[]): boolean {
+  return roles.some((role) => H3_REFERENCE_MEDIA_ROLES.has(role));
+}
+
+export function hasH3StartImageReferenceVideoConflict(
+  roles: readonly string[],
+): boolean {
+  return (
+    roles.includes("start_image") &&
+    roles.some((role) => role === "reference_video" || role === "depth")
+  );
 }
 
 const SEQUENCE_RETAINED_MEDIA_ROLES = new Set([
@@ -128,14 +170,19 @@ export interface H3ReferenceState {
   audioCount: number;
   totalCount: number;
   soundtrackCount: number;
+  hasReferenceMedia: boolean;
+  hasReferenceVideo: boolean;
   availability: H3ReferenceAvailability;
 }
 
 export function getH3ReferenceState(
-  inputs: GenSpaceMediaInput[],
+  inputs: readonly GenSpaceMediaInput[],
 ): H3ReferenceState {
-  const hasFlInput = inputs.some(({ role }) =>
-    role === "start_image" || role === "end_image" || role === "control_video" || role === "audio_guide" || role === "control_audio",
+  const hasFlInput = hasH3ReferenceConflict(inputs.map(({ role }) => role));
+  const roles = inputs.map(({ role }) => role);
+  const hasStartImage = roles.includes("start_image");
+  const hasReferenceVideo = roles.some(
+    (role) => role === "reference_video" || role === "depth",
   );
   const imageCount = inputs.filter(({ role }) => role === "reference_image").length;
   const videos = inputs.filter(
@@ -159,7 +206,7 @@ export function getH3ReferenceState(
   const canAdd = !hasFlInput && totalCount < 12;
   const availability = {
     image: canAdd && imageCount < 9,
-    video: canAdd && !depth && videoCount < 3,
+    video: canAdd && !hasStartImage && !depth && videoCount < 3,
     audio:
       canAdd &&
       soundtrackCount === 0 &&
@@ -174,6 +221,8 @@ export function getH3ReferenceState(
     audioCount,
     totalCount,
     soundtrackCount,
+    hasReferenceMedia: hasH3ReferenceMedia(roles),
+    hasReferenceVideo,
     availability,
   };
 }
